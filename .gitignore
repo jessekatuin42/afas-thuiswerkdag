@@ -1,0 +1,18 @@
+# Browser session data — NEVER commit. Contains cookies/tokens for AFAS.
+.browser-profile/
+
+# Diagnostics (screenshots, traces, DOM dumps) may contain personal data.
+artifacts/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local config overrides
+config.local.toml
+
+# Credentials — NEVER commit. Contains password and TOTP secret.
+.env

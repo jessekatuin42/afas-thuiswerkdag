@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Mijn declaraties (async fixture)</title></head>
+<body>
+  <!-- AFAS renders the grid asynchronously; rows must still be found. -->
+  <main>
+    <h2>Mijn declaraties</h2>
+    <div class="spinner">Laden...</div>
+    <div id="host"></div>
+  </main>
+  <script>
+    setTimeout(function () {
+      document.querySelector('.spinner').style.display = 'none';
+      document.getElementById('host').innerHTML =
+        '<div role="grid" aria-label="Mijn declaraties">' +
+          '<div role="row">' +
+            '<span role="columnheader">Datum boeking 1 31</span>' +
+            '<span role="columnheader">Datum</span>' +
+            '<span role="columnheader">Status</span>' +
+            '<span role="columnheader">Soort declaratie</span>' +
+            '<span role="columnheader">Totaalbedrag</span>' +
+          '</div>' +
+          '<div role="row">' +
+            '<span role="gridcell">16-08-2026</span>' +
+            '<span role="gridcell">17-08-2026</span>' +
+            '<span role="gridcell">Afgehandeld</span>' +
+            '<span role="gridcell">Thuiswerkdag</span>' +
+            '<span role="gridcell">2,00</span>' +
+          '</div>' +
+        '</div>';
+    }, 700);
+  </script>
+</body>
+</html>

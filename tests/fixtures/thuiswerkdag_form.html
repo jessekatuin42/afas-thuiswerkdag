@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Aanmaken verzameldeclaratie thuiswerkdag (fixture)</title></head>
+<body>
+  <!-- Mirrors the real page: a 'Nieuw' button opens a modal that has its own
+       'Aanmaken', while the page keeps a separate 'Aanmaken' to submit. -->
+  <main>
+    <h1>Aanmaken verzameldeclaratie thuiswerkdag</h1>
+    <h2>Thuiswerkdagen</h2>
+    <button type="button" id="nieuw">Nieuw</button>
+    <div id="lines" role="status">Geen gegevens</div>
+    <button type="button" id="page-aanmaken">Aanmaken</button>
+  </main>
+
+  <div id="dlg" role="dialog" aria-modal="true" aria-label="Dialog" hidden>
+    <span>Aanmaken declaratie (ESS) (incl. autorisatie) Thuiswerkdag</span>
+    <button type="button" aria-label="Sluiten">×</button>
+    <h2>Declaratie</h2>
+    <label for="datum">Datum</label>
+    <input type="text" id="datum" aria-label="Datum">
+    <button type="button" aria-label="Selecteer een datum">📅</button>
+    <label for="bedrag">Totaalbedrag</label>
+    <input type="text" id="bedrag" aria-label="Totaalbedrag" value="2,00" disabled>
+    <button type="button" id="dlg-aanmaken">Aanmaken</button>
+  </div>
+
+  <script>
+    document.getElementById('nieuw').addEventListener('click', function () {
+      document.getElementById('dlg').hidden = false;
+    });
+    document.getElementById('dlg-aanmaken').addEventListener('click', function () {
+      var v = document.getElementById('datum').value;
+      document.getElementById('lines').textContent = 'Thuiswerkdag ' + v + ' 2,00';
+      document.getElementById('dlg').hidden = true;
+      document.body.dataset.lineAdded = v;
+    });
+    document.getElementById('page-aanmaken').addEventListener('click', function () {
+      document.body.dataset.submitted = '1';
+    });
+  </script>
+</body>
+</html>

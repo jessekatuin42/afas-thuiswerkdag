@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Mijn declaraties (fixture)</title></head>
+<body>
+  <main>
+    <h2>Mijn declaraties</h2>
+    <!-- Mirrors the real AFAS grid: two date columns, quick-filter row. -->
+    <div role="grid" aria-label="Mijn declaraties">
+      <div role="rowgroup">
+        <div role="row">
+          <span role="columnheader">Datum boeking 1 31</span>
+          <span role="columnheader">Datum</span>
+          <span role="columnheader">Status</span>
+          <span role="columnheader">Soort declaratie</span>
+          <span role="columnheader">Omschrijving</span>
+          <span role="columnheader">Aantal te declareren</span>
+          <span role="columnheader">Totaalbedrag</span>
+          <span role="columnheader">Bijlage</span>
+        </div>
+        <div role="row">
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Datum boeking"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Datum"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Status"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Soort declaratie"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Omschrijving"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Aantal te declareren"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Totaalbedrag"></span>
+          <span role="gridcell"><input type="text" aria-label="Snelfilter voor Bijlage"></span>
+        </div>
+      </div>
+      <div role="rowgroup">
+        <!-- Booked 17-08-2026 but declared for 05-02-2026: must NOT match 17-08. -->
+        <div role="row">
+          <span role="gridcell">17-08-2026</span>
+          <span role="gridcell">05-02-2026</span>
+          <span role="gridcell">Afgehandeld</span>
+          <span role="gridcell">Thuiswerkdag</span>
+          <span role="gridcell">Thuiswerkdag</span>
+          <span role="gridcell">1,00</span>
+          <span role="gridcell">2,00</span>
+          <span role="gridcell"></span>
+        </div>
+        <!-- Declared for 18-08-2026. -->
+        <div role="row">
+          <span role="gridcell">11-02-2026</span>
+          <span role="gridcell">18-08-2026</span>
+          <span role="gridcell">Afgehandeld</span>
+          <span role="gridcell">Thuiswerkdag</span>
+          <span role="gridcell">Thuiswerkdag</span>
+          <span role="gridcell">1,00</span>
+          <span role="gridcell">2,00</span>
+          <span role="gridcell"></span>
+        </div>
+        <!-- Right date, wrong type: must NOT match. -->
+        <div role="row">
+          <span role="gridcell">01-03-2026</span>
+          <span role="gridcell">17-08-2026</span>
+          <span role="gridcell">Akkoord</span>
+          <span role="gridcell">Parkeerkosten</span>
+          <span role="gridcell">Parkeerkosten</span>
+          <span role="gridcell">1</span>
+          <span role="gridcell">6,30</span>
+          <span role="gridcell"></span>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
