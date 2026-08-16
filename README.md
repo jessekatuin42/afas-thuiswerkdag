@@ -198,6 +198,10 @@ python -m pytest tests/ -q               # everything (128 tests)
 python -m pytest tests/ -q -m "not browser"   # offline only, no Chromium
 ```
 
+Changing the code? See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the
+architecture, the design invariants, what is proven live versus fixture-only,
+and how to recapture the DOM when AFAS changes.
+
 Tests are hermetic — they need no `.env`, no network and no AFAS account. The
 `browser` marker launches a real headless Chromium against local HTML fixtures
 that mirror the captured AFAS DOM; those never reach AFAS.
