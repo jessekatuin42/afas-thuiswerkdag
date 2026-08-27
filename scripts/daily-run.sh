@@ -6,6 +6,10 @@
 # 11:00 on days worked from home. On office days it is off, the timer never
 # fires, and no declaration is made.
 #
+# Presence alone is not enough, though — Mondays and Fridays are office days on
+# which the desktop may well be on. So the week's shape is a second signal: only
+# Tue/Wed/Thu are declared by default (AFAS_DAYS overrides).
+#
 # That makes catch-up firing the central hazard. systemd replays a missed
 # OnCalendar run — after a boot (Persistent=true) or on resume from suspend —
 # and such a replay means precisely "this machine was NOT on at 11:00", i.e. an
@@ -62,9 +66,10 @@ trim_log() {
     fi
 }
 
-# --- Guard 1: weekdays only -------------------------------------------------
-# Belt and braces alongside the timer's Mon..Fri: a Friday run replayed after a
-# weekend boot would otherwise arrive on a Saturday.
+# --- Guard 1: weekends ------------------------------------------------------
+# Belt and braces alongside the timer's calendar: a Thursday run replayed after
+# a weekend boot would otherwise arrive on a Saturday. Not configurable — a run
+# on a weekend is always a replay, never a day worth declaring.
 dow=$(date +%u)
 if ((dow > 5)); then
     log "SKIP  weekend (ISO day $dow)"
@@ -72,7 +77,27 @@ if ((dow > 5)); then
     exit 0
 fi
 
-# --- Guard 2: grace window --------------------------------------------------
+# --- Guard 2: work-from-home days only --------------------------------------
+# Presence is the primary signal but not a sufficient one: the desktop is also
+# on at 11:00 on a Monday or Friday, and those are office days. So the schedule
+# is a second, independent signal — Tue/Wed/Thu by default. AFAS_DAYS overrides
+# with a comma-separated list of ISO weekdays (Mon=1 … Fri=5), e.g.
+# AFAS_DAYS=1,2,3,4,5 to go back to every weekday.
+WFH_DAYS="${AFAS_DAYS:-2,3,4}"
+if [[ ! "$WFH_DAYS" =~ ^[1-5](,[1-5])*$ ]]; then
+    # Same reasoning as the pause file below: a skipped declaration is fixable
+    # by hand, a wrong one is not. Never guess at a malformed day list.
+    log "SKIP  unreadable AFAS_DAYS '$WFH_DAYS' — expected ISO weekdays like 2,3,4"
+    trim_log
+    exit 0
+fi
+if [[ ",$WFH_DAYS," != *",$dow,"* ]]; then
+    log "SKIP  ISO day $dow is not a work-from-home day (declaring on $WFH_DAYS)"
+    trim_log
+    exit 0
+fi
+
+# --- Guard 3: grace window --------------------------------------------------
 now=$((10#$(date +%H) * 60 + 10#$(date +%M)))
 if ((now < WINDOW_START || now > WINDOW_END)); then
     log "SKIP  fired $(date +%H:%M), outside the $(printf '%02d:%02d' $((WINDOW_START / 60)) $((WINDOW_START % 60)))-$(printf '%02d:%02d' $((WINDOW_END / 60)) $((WINDOW_END % 60))) window — replay of a day this machine was off"
@@ -80,7 +105,7 @@ if ((now < WINDOW_START || now > WINDOW_END)); then
     exit 0
 fi
 
-# --- Guard 3: manual pause (holidays, leave) --------------------------------
+# --- Guard 4: manual pause (holidays, leave) --------------------------------
 if [[ -f "$PAUSE_FILE" ]]; then
     until_date=$(tr -d '[:space:]' <"$PAUSE_FILE")
     today=$(date +%F)
@@ -104,7 +129,7 @@ if [[ -f "$PAUSE_FILE" ]]; then
     fi
 fi
 
-# --- Guard 4: one run at a time ---------------------------------------------
+# --- Guard 5: one run at a time ---------------------------------------------
 exec 9>"$LOCK"
 if ! flock -n 9; then
     log "SKIP  another run holds the lock"

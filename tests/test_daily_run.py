@@ -23,8 +23,13 @@ WINDOW_START = (11, 0)
 WINDOW_END = (11, 59)
 
 
-def _run(tmp_path: Path, tz: str | None) -> list[str]:
-    """Run the wrapper with a hostile TZ; return the lines it logged."""
+def _run(tmp_path: Path, tz: str | None, days: str = "1,2,3,4,5") -> list[str]:
+    """Run the wrapper with a hostile TZ; return the lines it logged.
+
+    ``days`` opens the work-from-home guard to every weekday by default, so
+    these clock tests reach the window guard they are actually about whichever
+    day of the week they happen to run on.
+    """
     state = tmp_path / "state"
     config = tmp_path / "config"
     (config / "afas-thuiswerk").mkdir(parents=True)
@@ -35,6 +40,7 @@ def _run(tmp_path: Path, tz: str | None) -> list[str]:
     env = dict(os.environ)
     env["XDG_STATE_HOME"] = str(state)
     env["XDG_CONFIG_HOME"] = str(config)
+    env["AFAS_DAYS"] = days
     if tz is None:
         env.pop("TZ", None)
     else:
@@ -83,3 +89,49 @@ def test_window_verdict_follows_local_time(tmp_path, tz):
         assert not refused, "a run inside the local window was refused as a replay"
     else:
         assert refused, "a run outside the local window was accepted"
+
+
+def test_office_days_are_skipped(tmp_path):
+    """Today is an office day unless it is in the work-from-home list.
+
+    Presence cannot distinguish a Monday at home from a Monday before leaving
+    for the office, so the day list has to. Naming a list that excludes today
+    must stop the run whatever the clock says.
+    """
+    today = datetime.now().isoweekday()
+    others = ",".join(str(d) for d in range(1, 6) if d != today) or "1"
+
+    lines = _run(tmp_path, tz=None, days=others)
+
+    assert any("not a work-from-home day" in line or "weekend" in line for line in lines)
+
+
+def test_default_declares_only_tuesday_to_thursday(tmp_path):
+    """With AFAS_DAYS unset the schedule is Tue/Wed/Thu — Mon and Fri are office."""
+    state = tmp_path / "state"
+    config = tmp_path / "config"
+    (config / "afas-thuiswerk").mkdir(parents=True)
+    (config / "afas-thuiswerk" / "pause").write_text("2099-01-01\n")
+
+    env = dict(os.environ)
+    env["XDG_STATE_HOME"] = str(state)
+    env["XDG_CONFIG_HOME"] = str(config)
+    env.pop("AFAS_DAYS", None)
+
+    subprocess.run([str(WRAPPER)], env=env, check=True, timeout=60)
+    lines = (state / "afas-thuiswerk" / "run.log").read_text().splitlines()
+
+    today = datetime.now().isoweekday()
+    skipped = any(
+        "not a work-from-home day" in line or "weekend" in line for line in lines
+    )
+    assert skipped is (today not in (2, 3, 4)), (
+        f"ISO day {today}: unexpected work-from-home verdict in {lines}"
+    )
+
+
+def test_malformed_day_list_refuses_to_guess(tmp_path):
+    """A garbled AFAS_DAYS must skip, never fall back to declaring."""
+    lines = _run(tmp_path, tz=None, days="tue,wed")
+
+    assert any("unreadable AFAS_DAYS" in line for line in lines)
