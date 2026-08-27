@@ -8,6 +8,7 @@ its contents are never read by this code.
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 import time
 from contextlib import contextmanager
@@ -30,6 +31,22 @@ _LOGIN_HINTS = re.compile(
 )
 
 
+def prune_volatile_state(profile_dir: Path) -> None:
+    """Drop profile state that is worthless to us but can wedge startup.
+
+    Chromium 143 aborts while opening this profile's sync LevelDB — crashpad
+    reports "read out of range", the process dies on SIGTRAP, and Playwright
+    only sees a browser that closed itself. The daily timer run failed that way
+    two days running while the profile looked healthy from the outside.
+
+    The profile is never signed into a browser account, so nothing here is worth
+    carrying: it is regenerated on every launch. The login session (cookies,
+    Preferences, Local State) is deliberately left untouched — losing it would
+    force the unattended re-login path, which is the one path never proven.
+    """
+    shutil.rmtree(profile_dir / "Default" / "Sync Data", ignore_errors=True)
+
+
 class BrowserSession:
     """A persistent-profile Chromium context pointed at AFAS InSite."""
 
@@ -46,6 +63,7 @@ class BrowserSession:
     def start(self) -> Page:
         self.cfg.profile_dir.mkdir(parents=True, exist_ok=True)
         self.cfg.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        prune_volatile_state(self.cfg.profile_dir)
 
         self._pw = sync_playwright().start()
         launch_kwargs: dict = {
