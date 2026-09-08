@@ -117,6 +117,7 @@ def verifier_challenge(verifier: str) -> str:
 
 def authorize_url(verifier: str, state: str | None = None,
                   base_url: str = SHUTTEL_BASE) -> str:
+    state = state or secrets.token_urlsafe(16)
     params = {
         "client_id": SHUTTEL_CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
@@ -124,14 +125,19 @@ def authorize_url(verifier: str, state: str | None = None,
         "scope": SHUTTEL_SCOPE,
         "code_challenge": verifier_challenge(verifier),
         "code_challenge_method": "S256",
-        "state": state or secrets.token_urlsafe(16),
+        "state": state,
     }
     return f"{base_url.rstrip('/')}{_AUTH_PATH}?{urlencode(params)}"
 
 
-def extract_code(pasted: str) -> str:
+def extract_code(pasted: str, expected_state: str | None = None) -> str:
     """Pull the authorization code out of a pasted callback URL, or accept a
-    bare code. Reports an error callback rather than returning empty."""
+    bare code. Reports an error callback rather than returning empty.
+
+    ``expected_state`` is OAuth's CSRF protection, and it doubles as the check
+    that this code belongs to the verifier still held in memory: a code from an
+    earlier attempt otherwise fails at exchange time with an opaque PKCE error.
+    """
     text = pasted.strip()
     if "?" not in text and "://" not in text:
         return text
@@ -142,6 +148,17 @@ def extract_code(pasted: str) -> str:
             f"Shuttel returned an error instead of a code: "
             f"{query['error'][0]}" + (f" ({detail})" if detail else "")
         )
+    seen_state = query.get("state", [None])[0]
+    if expected_state and seen_state and seen_state != expected_state:
+        raise ShuttelAuthError(
+            "That code is from a different login attempt.\n"
+            f"  expected state {expected_state}\n"
+            f"  but the URL carries {seen_state}\n"
+            "  Each run generates a fresh verifier that only its own URL "
+            "matches, and the old one is gone once its process exits.\n"
+            "  Open the URL THIS run printed, then paste from that tab."
+        )
+
     codes = query.get("code")
     if not codes:
         if "/n/callback" in text or urlparse(text).path.rstrip("/") == "/n":

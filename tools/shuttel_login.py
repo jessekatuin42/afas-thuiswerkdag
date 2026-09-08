@@ -15,6 +15,7 @@ that with no browser involved.
 
 from __future__ import annotations
 
+import secrets
 import sys
 from pathlib import Path
 
@@ -39,7 +40,8 @@ TOKEN_PATH = PROJECT_ROOT / ".shuttel-token.json"
 
 def main() -> int:
     verifier = new_verifier()
-    url = authorize_url(verifier)
+    state = secrets.token_urlsafe(16)
+    url = authorize_url(verifier, state=state)
 
     print()
     print("  1. Open this URL in your browser and log in to Shuttel:")
@@ -57,6 +59,8 @@ def main() -> int:
     print("         Disallow: /")
     print()
     print("  3. Paste that tab's FULL address-bar URL here and press Enter.")
+    print(f"     (it must carry state={state} -- a URL from an earlier run")
+    print("      cannot work, its verifier died with that process)")
     print()
 
     store = TokenStore(TOKEN_PATH)
@@ -77,7 +81,7 @@ def main() -> int:
             continue
 
         try:
-            code = extract_code(pasted)
+            code = extract_code(pasted, expected_state=state)
         except ShuttelAuthError as exc:
             error(str(exc))
             if attempt < 2:

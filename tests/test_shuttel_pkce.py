@@ -226,3 +226,24 @@ def test_the_apps_own_callback_url_gets_a_targeted_explanation():
     msg = str(exc.value)
     assert "the app's own page" in msg
     assert "robots.txt" in msg
+
+
+def test_a_code_from_a_different_login_attempt_is_refused():
+    """state is OAuth's CSRF protection, and it doubles as the check that this
+    code belongs to the verifier we still hold. Without it, a code from an
+    earlier attempt fails later and cryptically, at exchange time."""
+    url = "https://mijn.shuttel.nl/robots.txt?state=OLD&code=C"
+    with pytest.raises(ShuttelAuthError) as exc:
+        extract_code(url, expected_state="CURRENT")
+    msg = str(exc.value)
+    assert "different login attempt" in msg
+
+
+def test_a_matching_state_is_accepted():
+    url = "https://mijn.shuttel.nl/robots.txt?state=CURRENT&code=C"
+    assert extract_code(url, expected_state="CURRENT") == "C"
+
+
+def test_state_is_only_enforced_when_we_have_one_to_compare():
+    url = "https://mijn.shuttel.nl/robots.txt?state=ANY&code=C"
+    assert extract_code(url) == "C"
