@@ -1,67 +1,116 @@
 # afas-thuiswerkdag
 
-Create your AFAS InSite **Thuiswerkdag** (work-from-home) declaration from the
-command line, instead of clicking through the portal.
+Declare your work days without clicking through two portals.
 
-```console
-$ afas-thuiswerk --today
-[09:30:03] Checking AFAS authentication
-[09:30:04] Opening Mijn declaraties
-[09:30:06] Filtered grid on Soort declaratie = Thuiswerkdag
-[09:30:08] No declaration found for 2026-08-17
-[09:30:11] Clicked 'Nieuw'
-[09:30:12] Date field verified
-[09:30:14] Submitting declaration
-[09:30:18] SUCCESS: Thuiswerkdag created for 2026-08-17
+* **Home days** become an AFAS InSite **Thuiswerkdag** declaration (€2/day).
+* **Office days** become **Shuttel** commute journeys, so the kilometres get
+  reimbursed.
 
-Successfully created AFAS Thuiswerkdag declaration.
+Pick a month on a calendar, press Sync, and it files what is missing.
 
-Date: 2026-08-17
-Amount: 2,00
-Status: Created
+```
+Thuiswerkdagen                    [Home|Office]  Fill Tue/Wed/Thu  Fill Mon/Fri  Check  Sync
+
+  Mon      Tue      Wed      Thu      Fri
+   1        2        3        4        5
+          [AFAS]   [AFAS]  [Shuttel]
+
+AFAS checked 21:45   Shuttel checked 21:45
 ```
 
-It drives the same web UI you use by hand, with Playwright + Chromium. There is
-no AFAS API involved: AFAS InSite exposes no documented employee-facing API for
-creating a `verzameldeclaratie`, so browser automation is the honest mechanism.
+The two halves work nothing alike, and that is forced by the systems rather
+than chosen. AFAS InSite exposes no employee-facing API for creating a
+`verzameldeclaratie`, so it is driven through the real web UI with Playwright.
+Shuttel is a Flutter app with no usable DOM, but it talks to a REST API behind
+Keycloak — so it is driven through that, with no browser at all.
 
 👉 **New here? Start with [SETUP.md](SETUP.md).**
 
 ## What it guarantees
 
-* **No duplicates.** It checks your declarations grid for an existing
-  Thuiswerkdag on the requested date before creating anything. AFAS is the
-  source of truth — there is no local database of what you have submitted.
-* **No blind success.** After submitting it re-reads the grid and confirms the
-  record is really there. If it cannot confirm, it says so instead of claiming
-  success, and exits non-zero.
-* **No dangerous retries.** An uncertain submission is never retried
-  automatically, because that is exactly how duplicates get created.
-* **No credential handling by default.** You log in yourself in a real browser
-  window. Credentials are opt-in, local-only, and never printed or logged.
+* **Nothing is filed against a system it has not read.** Both systems are read
+  back first. A day whose system could not be read is marked *unknown* and
+  refused, never filed on the assumption that it is probably empty.
+* **No duplicates.** Existing declarations are the source of truth; there is no
+  local record of what you submitted. An office day counts as done only when
+  *both* its journeys are present, so a half-filed day is never reported
+  complete.
+* **No blind success.** After submitting, it re-reads and confirms. If it
+  cannot confirm, it says so and stops the entire run — an unknown outcome is
+  not information, and nothing else should be written until a human looks.
+* **No dangerous retries.** An uncertain submission is never retried, because
+  that is exactly how duplicates get created.
+* **Nothing runs unattended.** Declarations happen when you press Sync.
 
 ## Requirements
 
 * Python 3.11+ (3.12 recommended — `tomllib` is used for config)
-* Chromium (installed via Playwright, or a system Chromium)
+* Chromium (via Playwright, or a system one) for the AFAS half
+* Docker or Podman, for the dashboard
 * An AFAS InSite account with the Thuiswerkdag declaration available
+* A Shuttel account, if you want the commute half
 
 ## Quick start
 
 ```bash
 git clone git@github.com:jessekatuin42/afas-thuiswerkdag.git
 cd afas-thuiswerkdag
+cp .env.example .env && chmod 600 .env   # then set AFAS_TENANT
+docker compose up -d                     # http://127.0.0.1:8765
+```
+
+Click days to mark them, **Check** to read both systems, **Sync** to file.
+Dragging paints a range; **Fill Tue/Wed/Thu** does a month in one click.
+
+The dashboard binds to `127.0.0.1` only. It files financial declarations and
+has no authentication, so it must not be reachable from your network — if you
+change the published port, keep the `127.0.0.1:` prefix.
+
+For the Shuttel half, log in once. The tools run on the host rather than in
+the container (the login opens a real browser), so they need the virtualenv:
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python tools/shuttel_login.py     # opens a browser, stores a token
+.venv/bin/python tools/inspect_shuttel.py   # shows your saved routes
+```
+
+then set `SHUTTEL_COMMUTE_TEMPLATES` in `.env` to the routes that make up one
+office day. See [SETUP.md](SETUP.md).
+
+## Keeping it running
+
+```bash
+cp systemd/afas-planner.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now afas-planner
+loginctl enable-linger "$USER"      # so it starts at boot without logging in
+```
+
+That unit only keeps a web server up. It files nothing and decides nothing.
+
+> An earlier version shipped an 11:00 timer that inferred "worked from home"
+> from the machine being switched on. The inference was wrong twice — once when
+> systemd replayed a missed run, once when the caller's clock read UTC — and
+> each time it declared a day that had not happened. Picking days explicitly
+> removes the guess, so the timer was removed.
+
+## Single day, from the command line
+
+The original CLI still files one AFAS day, if you prefer it or want it under
+your own scheduler:
+
+```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
-cp .env.example .env && chmod 600 .env   # then set AFAS_TENANT
 python afas_thuiswerk.py --today --dry-run
 ```
 
 Full walkthrough, including how to find your environment number and set up
 unattended 2FA: **[SETUP.md](SETUP.md)**.
 
-## Usage
+## CLI usage
 
 ```bash
 python afas_thuiswerk.py --today
@@ -191,6 +240,18 @@ slow_mo_ms = 0
 
 Precedence: built-in defaults < `.env` < `config.local.toml`.
 
+`.env` also carries the account-specific bits, none of which belong in source:
+
+| Variable | Meaning |
+| --- | --- |
+| `AFAS_TENANT` | your AFAS InSite environment number |
+| `AFAS_DAYS` | which ISO weekdays are home days (Mon=1 … Sun=7; default `2,3,4`). Drives **Fill Tue/Wed/Thu**; **Fill Mon/Fri** is derived as the rest of the working week. |
+| `SHUTTEL_COMMUTE_TEMPLATES` | the saved Shuttel routes making up one office day, as `transactionId` values. `tools/inspect_shuttel.py` lists yours. |
+| `PLANNER_DB` | where the plan is stored (default `data/plan.db`) |
+
+A malformed `AFAS_DAYS` stops the app rather than falling back to the default —
+guessing there would mark days you never chose.
+
 ## Testing
 
 ```bash
@@ -251,7 +312,19 @@ requirement check, and unlike Chromium it cannot be pointed at a stock binary.
   `Credentials.__repr__` is overridden, so even an accidental `print()` or a
   stack trace shows `password=set`, never the value.
 * `.browser-profile/` holds session cookies and is gitignored. Never commit it.
-* Nothing is transmitted anywhere except to AFAS itself.
+* **Shuttel stores no password at all.** `tools/shuttel_login.py` runs
+  authorization-code + PKCE once in a browser and keeps the resulting
+  `offline_access` refresh token in `.shuttel-token.json` — `chmod 600`,
+  gitignored, dockerignored. Later runs need no browser and no password.
+  (Shuttel's Keycloak realm runs a separate direct-grant flow that rejects
+  credentials which log in perfectly well in a browser, so a password grant was
+  never an option here.)
+* `artifacts/` holds diagnostics — screenshots, DOM dumps, captured API
+  responses. Those contain your own declarations, and for Shuttel your home and
+  office addresses. Gitignored; redact before sharing.
+* The dashboard binds to `127.0.0.1` and has no authentication. That is safe
+  only for as long as it stays on loopback.
+* Nothing is transmitted anywhere except to AFAS and Shuttel themselves.
 
 > **On storing both factors.** Putting your password *and* your TOTP secret in
 > one file is effectively single-factor auth. That is a deliberate trade-off for

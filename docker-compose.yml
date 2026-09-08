@@ -5,6 +5,9 @@ services:
     # The image's ENTRYPOINT is the one-shot CLI, so `command` alone would be
     # appended to it and parsed as CLI arguments. Replace the entrypoint
     # outright -- an empty list is not honoured by every compose provider.
+    # Survive a crash or a podman restart while the machine is up. Boot is
+    # handled by systemd/afas-planner.service.
+    restart: unless-stopped
     entrypoint: ["python", "-m", "uvicorn"]
     # SECURITY, and the two halves are not interchangeable:
     #

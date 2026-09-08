@@ -1,0 +1,43 @@
+# Keeps the day-planner dashboard running, so it is there whenever you want it.
+#
+# This only starts a web server. It files nothing and decides nothing -- unlike
+# the 11:00 timer this project used to ship, which inferred "worked from home"
+# from the machine being switched on and got it wrong twice. Declarations still
+# happen only when a human opens the dashboard and presses Sync.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/afas-planner.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now afas-planner
+#
+# Starting at boot without logging in needs lingering:
+#   loginctl enable-linger "$USER"
+#
+# Adjust WorkingDirectory if your checkout lives elsewhere.
+
+[Unit]
+Description=AFAS/Shuttel day planner dashboard
+Documentation=https://github.com/jessekatuin42/afas-thuiswerkdag
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/Documents/afas-thuiswerk
+
+# Pulling and building the image on a cold start is slow; do not let systemd
+# call that a failure.
+TimeoutStartSec=900
+
+ExecStart=/run/current-system/sw/bin/docker compose up -d
+ExecStop=/run/current-system/sw/bin/docker compose down
+
+# If the container dies while the machine is up, compose's own restart policy
+# brings it back; this unit only has to survive boot.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
