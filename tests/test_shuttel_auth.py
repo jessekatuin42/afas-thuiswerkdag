@@ -92,6 +92,30 @@ def test_a_failed_refresh_falls_back_to_the_password_grant():
     assert form(t.seen[2])["grant_type"] == "password"
 
 
+def test_a_disabled_grant_is_distinguished_from_a_bad_password():
+    """Keycloak says unauthorized_client when the client forbids the grant, and
+    invalid_grant when the login simply failed. Conflating them sends you to
+    fix the wrong thing."""
+    t = transport_returning(httpx.Response(400, json={
+        "error": "unauthorized_client",
+        "error_description": "Client not allowed for direct access grants",
+    }))
+    with pytest.raises(ShuttelAuthError) as exc:
+        TokenClient(CREDS, transport=t).access_token()
+    assert "does not permit the password grant" in str(exc.value)
+    assert "PKCE" in str(exc.value)
+
+
+def test_a_rejected_login_says_it_is_about_the_credentials():
+    t = transport_returning(httpx.Response(400, json={
+        "error": "invalid_grant", "error_description": "Invalid user credentials",
+    }))
+    with pytest.raises(ShuttelAuthError) as exc:
+        TokenClient(CREDS, transport=t).access_token()
+    assert "Invalid user credentials" in str(exc.value)
+    assert "credentials or the account" in str(exc.value)
+
+
 def test_credentials_never_reveal_the_password_in_repr_or_str():
     assert "pw" not in repr(CREDS)
     assert "pw" not in str(CREDS)

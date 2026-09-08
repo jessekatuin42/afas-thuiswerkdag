@@ -128,18 +128,39 @@ class TokenClient:
             raise ShuttelAuthError(f"Could not reach Shuttel: {exc}") from None
 
         if resp.status_code != 200:
-            # Deliberately not including the request body, which holds the
-            # password. Keycloak's own error code is enough to act on.
-            code = ""
+            # Never include the request body, which holds the password.
+            # Keycloak's own error fields are enough to act on -- and
+            # error_description is the one that actually says why, so dropping
+            # it (as an earlier version did) turns a precise answer into a guess.
+            code = desc = ""
             try:
-                code = resp.json().get("error", "")
+                payload = resp.json()
+                code = payload.get("error", "")
+                desc = payload.get("error_description", "")
             except Exception:
                 pass
+
+            # These two are routinely confused, and they point in opposite
+            # directions:
+            #   unauthorized_client -> the client forbids this grant entirely
+            #   invalid_grant       -> the grant is allowed, the login was not
+            if code == "unauthorized_client":
+                raise ShuttelAuthError(
+                    f"The shuttel-portal client does not permit the password "
+                    f"grant (HTTP {resp.status_code} {code}"
+                    + (f": {desc}" if desc else "")
+                    + "). No credential will fix this; authorization-code + "
+                    "PKCE is required instead."
+                )
+
             raise ShuttelAuthError(
-                f"Shuttel rejected the login (HTTP {resp.status_code} {code}). "
-                "If the shuttel-portal client has Direct Access Grants "
-                "disabled, this flow cannot work and authorization-code + PKCE "
-                "is required instead."
+                f"Shuttel rejected the login (HTTP {resp.status_code} {code}"
+                + (f": {desc}" if desc else "")
+                + "). The grant type itself is permitted -- Keycloak answers "
+                "'unauthorized_client' when it is not -- so this is about the "
+                "credentials or the account: a wrong username format, a wrong "
+                "password, or an account that requires a further step such as "
+                "a one-time code."
             )
         return self._store(resp.json())
 
