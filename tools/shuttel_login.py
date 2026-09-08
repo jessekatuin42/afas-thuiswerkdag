@@ -51,29 +51,48 @@ def main() -> int:
     print("     deliberate: it runs no JavaScript, so nothing swallows the")
     print("     code and it stays visible in the address bar.")
     print()
-    print("  3. Paste the FULL address-bar URL here and press Enter.")
+    print("     It shows exactly this, and nothing else:")
     print()
-
-    try:
-        pasted = input("  URL: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        error("Cancelled; nothing was stored.")
-        return 1
-
-    if not pasted:
-        error("Nothing pasted.")
-        return 1
+    print("         User-agent: *")
+    print("         Disallow: /")
+    print()
+    print("  3. Paste that tab's FULL address-bar URL here and press Enter.")
+    print()
 
     store = TokenStore(TOKEN_PATH)
     client = TokenClient(ShuttelCredentials(), transport=None, store=store)
 
-    try:
-        code = extract_code(pasted)
-        log("Exchanging the authorization code")
-        client.exchange_code(code, verifier)
-    except ShuttelAuthError as exc:
-        error(str(exc))
+    # Retry in-process: the verifier stays valid, so a mis-paste costs a
+    # re-paste rather than a whole new login round.
+    for attempt in range(3):
+        try:
+            pasted = input("  URL: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            error("Cancelled; nothing was stored.")
+            return 1
+
+        if not pasted:
+            error("Nothing pasted.")
+            continue
+
+        try:
+            code = extract_code(pasted)
+        except ShuttelAuthError as exc:
+            error(str(exc))
+            if attempt < 2:
+                print("\n  Try again with the /robots.txt tab.\n")
+            continue
+
+        try:
+            log("Exchanging the authorization code")
+            client.exchange_code(code, verifier)
+            break
+        except ShuttelAuthError as exc:
+            error(str(exc))
+            return 1
+    else:
+        error("Gave up after three attempts; nothing was stored.")
         return 1
 
     log(f"Stored a refresh token in {TOKEN_PATH.name} (chmod 600)")

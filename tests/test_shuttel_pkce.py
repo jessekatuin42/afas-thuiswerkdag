@@ -215,3 +215,14 @@ def test_a_stale_token_still_falls_back_to_a_working_password(tmp_path):
         ShuttelCredentials(username="u@x.invalid", password="p"),
         transport=t, store=store)
     assert client.access_token() == "viaPassword"
+
+
+def test_the_apps_own_callback_url_gets_a_targeted_explanation():
+    """Pasting https://mijn.shuttel.nl/n/callback is the predictable mistake:
+    it is where the app sits, and it never carries a readable code. Saying only
+    'No code parameter' sends people to look at the wrong thing."""
+    with pytest.raises(ShuttelAuthError) as exc:
+        extract_code("https://mijn.shuttel.nl/n/callback")
+    msg = str(exc.value)
+    assert "the app's own page" in msg
+    assert "robots.txt" in msg

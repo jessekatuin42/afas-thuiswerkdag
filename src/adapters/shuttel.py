@@ -144,7 +144,20 @@ def extract_code(pasted: str) -> str:
         )
     codes = query.get("code")
     if not codes:
-        raise ShuttelAuthError("No 'code' parameter in that URL.")
+        if "/n/callback" in text or urlparse(text).path.rstrip("/") == "/n":
+            raise ShuttelAuthError(
+                "That is the app's own page, not the login redirect.\n"
+                "  The Flutter app consumes the code at /n/callback, which is\n"
+                "  exactly why the login points at /robots.txt instead.\n"
+                "  The tab you want shows two lines of plain text:\n"
+                "      User-agent: *\n"
+                "      Disallow: /\n"
+                "  ...and its address bar ends with ?code=..."
+            )
+        raise ShuttelAuthError(
+            f"No 'code' parameter in that URL. Expected something ending in "
+            f"?code=... on {REDIRECT_URI}"
+        )
     return codes[0]
 
 
