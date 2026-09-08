@@ -55,11 +55,18 @@ def load_credentials() -> ShuttelCredentials:
 def main() -> int:
     creds = load_credentials()
     store = TokenStore(PROJECT_ROOT / ".shuttel-token.json")
-    if not store.load() and not creds.complete:
+    if not store.load():
+        # Say this before attempting anything. Falling through to the password
+        # grant buries the one instruction that matters under a failure that
+        # looks like a credential problem and is not.
         error(
-            "No Shuttel session. Run:  python tools/shuttel_login.py\n"
-            "(The password grant does not work for this account -- Keycloak's\n"
-            " direct flow rejects credentials that log in fine in a browser.)"
+            "No stored Shuttel session. Log in first:\n"
+            "\n"
+            "    python tools/shuttel_login.py\n"
+            "\n"
+            "That opens a browser once and stores a refresh token. A password\n"
+            "alone cannot substitute: Keycloak's direct grant flow rejects\n"
+            "credentials that log in perfectly well in a browser."
         )
         return 3
 
