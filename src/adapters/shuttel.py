@@ -25,9 +25,10 @@ import os
 import secrets
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -37,6 +38,9 @@ SHUTTEL_BASE = "https://mijn.shuttel.nl"
 SHUTTEL_REALM = "shuttel"
 SHUTTEL_CLIENT_ID = "shuttel-portal"
 SHUTTEL_SCOPE = "openid offline_access shuttel_portal_api_user"
+
+#: Shuttel splits journeys into commute and business. Only commute is ours.
+COMMUTE_COST_TYPE = "commute"
 
 _TOKEN_PATH = f"/auth/realms/{SHUTTEL_REALM}/protocol/openid-connect/token"
 _AUTH_PATH = f"/auth/realms/{SHUTTEL_REALM}/protocol/openid-connect/auth"
@@ -436,26 +440,179 @@ class ShuttelClient:
         return {path: self.get(path) for path in INSPECT_ENDPOINTS}
 
 
-class ShuttelAdapter:
-    """DayFiler for Shuttel. API surface not yet mapped -- see spec Q1.
+class ShuttelApi(ShuttelClient):
+    """Read-only access plus the one write the planner needs.
 
-    Deliberately raises rather than returning empty results: an adapter that
-    quietly reported "nothing here" would make unfiled office days look filed.
+    Separate from ShuttelClient on purpose: the inspector takes the read-only
+    class, so a discovery tool still cannot create a declaration by accident.
+    """
+
+    def post(self, path: str, payload: dict) -> dict:
+        token = self._tokens.access_token()
+        try:
+            resp = self._client.post(
+                path, json=payload,
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            return {"status": None, "error": f"{type(exc).__name__}: {exc}"}
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text[:2000]
+        return {"status": resp.status_code, "body": body}
+
+
+# ---------------------------------------------------------------------------
+# Turning a saved favourite into a new declaration
+#
+# A favourite is not merely a route: the API returns it carrying every
+# MobileDeclaration field, marked "type": "template". Filing a commute day is
+# therefore cloning one onto a new date -- not assembling a payload by hand.
+# ---------------------------------------------------------------------------
+
+#: The clock the declarations are expressed in. The offset must be recomputed
+#: per target date, never copied from the template: a February template carries
+#: +01:00, and reusing that in July files the journey an hour off.
+_NL = ZoneInfo("Europe/Amsterdam")
+
+#: Fields the server owns. transactionId in particular identifies an *existing*
+#: transaction; sending it back either fails or ties the new declaration to the
+#: old one.
+READ_ONLY_FIELDS: frozenset[str] = frozenset({
+    "transactionId", "referenceId", "processed", "deletable", "editable",
+    "type", "filtered", "canBeMarkedRecurring", "metaData", "co2", "iconName",
+})
+
+
+def _move_to(stamp: str, day: date) -> str:
+    """Same wall-clock time, new date, correct Dutch UTC offset."""
+    original = datetime.fromisoformat(stamp).astimezone(_NL)
+    moved = datetime.combine(day, original.time(), tzinfo=_NL)
+    return moved.isoformat(timespec="milliseconds")
+
+
+def redate_template(template: dict, day: date) -> dict:
+    """Clone a saved favourite onto ``day``, keeping every time-of-day."""
+    if not template.get("startsOn"):
+        raise ValueError("template has no startsOn; refusing to invent one")
+
+    out = {k: v for k, v in template.items() if k not in READ_ONLY_FIELDS}
+    out["startsOn"] = _move_to(template["startsOn"], day)
+    if template.get("endsOn"):
+        out["endsOn"] = _move_to(template["endsOn"], day)
+    out["locations"] = [
+        {**loc, "time": _move_to(loc["time"], day)} if loc.get("time") else dict(loc)
+        for loc in (template.get("locations") or [])
+    ]
+    out["quantities"] = [dict(q) for q in (template.get("quantities") or [])]
+    return out
+
+
+#: Query parameters the portal itself uses. includeProcessed matters: without
+#: it the list comes back empty, because settled journeys are the normal case.
+_TX_PATH = "/api/v1/transaction/"
+_DECLARATION_PATH = "/api/v1/transaction/declaration"
+_FAVOURITES_PATH = "/api/v1/favorites/routes"
+_PAGE_SIZE = 100
+_MAX_PAGES = 20
+
+
+def _month_range(year: int, month: int) -> tuple[str, str]:
+    start = date(year, month, 1)
+    end = date(year + (month == 12), (month % 12) + 1, 1)
+    return start.isoformat(), end.isoformat()
+
+
+class ShuttelAdapter:
+    """DayFiler for Shuttel commute journeys.
+
+    An office day is two journeys -- out in the morning, back in the evening --
+    filed by cloning the two saved favourites named in ``template_ids`` onto
+    the target date. Which favourites those are is account-specific and must
+    stay configuration: this repository is public.
     """
 
     system = "shuttel"
 
-    def __init__(self, token_client: TokenClient):
-        self._tokens = token_client
+    def __init__(self, api: "ShuttelApi", template_ids: tuple[str, ...] = ()):
+        self._api = api
+        self._template_ids = tuple(template_ids)
+        self._templates: list[dict] | None = None
+
+    # -- templates --------------------------------------------------------
+
+    def templates(self) -> list[dict]:
+        if self._templates is None:
+            result = self._api.get(_FAVOURITES_PATH)
+            favourites = result.get("body") if result.get("status") == 200 else []
+            by_id = {f.get("transactionId"): f for f in (favourites or [])}
+            self._templates = [by_id[t] for t in self._template_ids if t in by_id]
+        return self._templates
+
+    # -- reading ----------------------------------------------------------
 
     def read_month(self, year: int, month: int) -> dict[date, Entry]:
-        raise ShuttelNotImplementedError(
-            "Shuttel read_month is not implemented: the commute-entry API has "
-            "not been mapped yet (spec open question 1)."
-        )
+        lo, hi = _month_range(year, month)
+        found: dict[date, Entry] = {}
+        for page in range(_MAX_PAGES):
+            result = self._api.get(
+                f"{_TX_PATH}?costTypes={COMMUTE_COST_TYPE}&fromDate={lo}"
+                f"&untilDate={hi}&includeProcessed=true"
+                f"&pageNr={page}&pageSize={_PAGE_SIZE}"
+            )
+            if result.get("status") != 200:
+                raise ShuttelAuthError(
+                    f"Shuttel would not list transactions "
+                    f"(HTTP {result.get('status')})."
+                )
+            body = result.get("body") or {}
+            for item in body.get("content") or []:
+                stamp = item.get("startsOn") or ""
+                try:
+                    when = datetime.fromisoformat(stamp).astimezone(_NL).date()
+                except ValueError:
+                    continue
+                if when.year == year and when.month == month:
+                    km = (item.get("quantities") or [{}])[0].get("amount", "")
+                    found[when] = Entry(day=when, summary=f"commute {km} km")
+            if body.get("number", 0) + 1 >= (body.get("totalPages") or 1):
+                break
+        return found
+
+    # -- writing ----------------------------------------------------------
 
     def file(self, day: date) -> FileResult:
+        if day in self.read_month(day.year, day.month):
+            return FileResult(day, self.system, FileOutcome.ALREADY,
+                              "Shuttel already has a commute journey for that day")
+
+        templates = self.templates()
+        if len(templates) != len(self._template_ids) or not templates:
+            return FileResult(
+                day, self.system, FileOutcome.FAILED,
+                f"Could not resolve every configured commute template "
+                f"({len(templates)} of {len(self._template_ids)} found). "
+                f"Check SHUTTEL_COMMUTE_TEMPLATES."
+            )
+
+        for template in templates:
+            result = self._api.post(_DECLARATION_PATH, redate_template(template, day))
+            if result.get("status") not in (200, 201):
+                # Stop at the first refusal. Continuing would leave a day
+                # half-filed, and nothing about it would look wrong afterwards.
+                return FileResult(
+                    day, self.system, FileOutcome.FAILED,
+                    f"Shuttel refused a journey (HTTP {result.get('status')}); "
+                    f"{len(templates)} were planned. Check the day by hand."
+                )
+
+        # Never trust the submit: confirm by re-reading, as the AFAS side does.
+        if day in self.read_month(day.year, day.month):
+            return FileResult(day, self.system, FileOutcome.FILED,
+                              f"{len(templates)} journey(s)")
         return FileResult(
-            day, self.system, FileOutcome.FAILED,
-            "Shuttel adapter not implemented yet (spec open question 1).",
+            day, self.system, FileOutcome.UNVERIFIED,
+            "Shuttel accepted the journeys but does not list them. Check by hand."
         )

@@ -11,7 +11,13 @@ import os
 from pathlib import Path
 
 from src.adapters.afas_lazy import LazyAfasAdapter
-from src.adapters.shuttel import ShuttelAdapter, ShuttelCredentials, TokenClient
+from src.adapters.shuttel import (
+    ShuttelAdapter,
+    ShuttelApi,
+    ShuttelCredentials,
+    TokenClient,
+    TokenStore,
+)
 from src.config import PROJECT_ROOT, load_config
 from src.planner.engine import SyncEngine
 from src.planner.model import parse_home_days
@@ -23,10 +29,21 @@ def build_default_app():
     cfg = load_config()
     store = PlanStore(Path(os.environ.get("PLANNER_DB", PROJECT_ROOT / "data" / "plan.db")))
 
-    shuttel = ShuttelAdapter(TokenClient(ShuttelCredentials(
-        username=os.environ.get("SHUTTEL_USERNAME", "").strip(),
-        password=os.environ.get("SHUTTEL_PASSWORD", "").strip(),
-    )))
+    tokens = TokenClient(
+        ShuttelCredentials(
+            username=os.environ.get("SHUTTEL_USERNAME", "").strip(),
+            password=os.environ.get("SHUTTEL_PASSWORD", "").strip(),
+        ),
+        store=TokenStore(PROJECT_ROOT / ".shuttel-token.json"),
+    )
+    shuttel = ShuttelAdapter(
+        ShuttelApi(tokens),
+        template_ids=tuple(
+            t.strip()
+            for t in os.environ.get("SHUTTEL_COMMUTE_TEMPLATES", "").split(",")
+            if t.strip()
+        ),
+    )
 
     # AFAS costs a browser, so it is opened per operation rather than held
     # open for the life of the process.
