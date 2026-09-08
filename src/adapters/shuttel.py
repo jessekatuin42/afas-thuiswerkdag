@@ -513,7 +513,12 @@ def redate_template(template: dict, day: date) -> dict:
 #: Query parameters the portal itself uses. includeProcessed matters: without
 #: it the list comes back empty, because settled journeys are the normal case.
 _TX_PATH = "/api/v1/transaction/"
-_DECLARATION_PATH = "/api/v1/transaction/declaration"
+
+#: Journeys are POSTed here, NOT to /api/v1/transaction/declaration. That one
+#: is the expense endpoint and answers 409 "Declaration does not have an
+#: attachment" -- it wants a receipt, which a car journey has no business
+#: carrying. Learned by having it refused.
+_JOURNEY_PATH = "/api/v1/transaction/"
 _FAVOURITES_PATH = "/api/v1/favorites/routes"
 _PAGE_SIZE = 100
 _MAX_PAGES = 20
@@ -553,9 +558,10 @@ class ShuttelAdapter:
 
     # -- reading ----------------------------------------------------------
 
-    def read_month(self, year: int, month: int) -> dict[date, Entry]:
+    def _journeys_by_day(self, year: int, month: int) -> dict[date, int]:
+        """How many commute journeys each day already has."""
         lo, hi = _month_range(year, month)
-        found: dict[date, Entry] = {}
+        counts: dict[date, int] = {}
         for page in range(_MAX_PAGES):
             result = self._api.get(
                 f"{_TX_PATH}?costTypes={COMMUTE_COST_TYPE}&fromDate={lo}"
@@ -575,20 +581,46 @@ class ShuttelAdapter:
                 except ValueError:
                     continue
                 if when.year == year and when.month == month:
-                    km = (item.get("quantities") or [{}])[0].get("amount", "")
-                    found[when] = Entry(day=when, summary=f"commute {km} km")
+                    counts[when] = counts.get(when, 0) + 1
             if body.get("number", 0) + 1 >= (body.get("totalPages") or 1):
                 break
-        return found
+        return counts
+
+    def read_month(self, year: int, month: int) -> dict[date, Entry]:
+        """Days that are *completely* filed.
+
+        A day with only one of its two journeys is deliberately not reported:
+        calling it done would leave the return leg unclaimed with nothing to
+        show for it -- the same silent-underclaim failure as the AFAS
+        two-date-column trap.
+        """
+        expected = max(len(self._template_ids), 1)
+        return {
+            day: Entry(day=day, summary=f"{n} commute journey(s)")
+            for day, n in self._journeys_by_day(year, month).items()
+            if n >= expected
+        }
 
     # -- writing ----------------------------------------------------------
 
     def file(self, day: date) -> FileResult:
-        if day in self.read_month(day.year, day.month):
-            return FileResult(day, self.system, FileOutcome.ALREADY,
-                              "Shuttel already has a commute journey for that day")
-
         templates = self.templates()
+        expected = max(len(self._template_ids), 1)
+        existing = self._journeys_by_day(day.year, day.month).get(day, 0)
+
+        if existing >= expected:
+            return FileResult(day, self.system, FileOutcome.ALREADY,
+                              f"Shuttel already has {existing} journey(s)")
+        if existing:
+            # Neither done nor safe to complete: posting the full set again
+            # would duplicate the leg already there.
+            return FileResult(
+                day, self.system, FileOutcome.FAILED,
+                f"Shuttel has {existing} of {expected} journeys for that day. "
+                f"Fix it by hand -- filing the set again would duplicate the "
+                f"journey that is already there."
+            )
+
         if len(templates) != len(self._template_ids) or not templates:
             return FileResult(
                 day, self.system, FileOutcome.FAILED,
@@ -598,18 +630,29 @@ class ShuttelAdapter:
             )
 
         for template in templates:
-            result = self._api.post(_DECLARATION_PATH, redate_template(template, day))
+            result = self._api.post(_JOURNEY_PATH, redate_template(template, day))
             if result.get("status") not in (200, 201):
                 # Stop at the first refusal. Continuing would leave a day
                 # half-filed, and nothing about it would look wrong afterwards.
+                #
+                # Carry the server's own explanation: Shuttel answers RFC 7807
+                # problem documents, and 'detail' is the whole diagnosis. A
+                # bare status code sends the reader guessing.
+                body = result.get("body")
+                detail = ""
+                if isinstance(body, dict):
+                    detail = body.get("detail") or body.get("title") or ""
+                elif body:
+                    detail = str(body)[:300]
                 return FileResult(
                     day, self.system, FileOutcome.FAILED,
-                    f"Shuttel refused a journey (HTTP {result.get('status')}); "
-                    f"{len(templates)} were planned. Check the day by hand."
+                    f"Shuttel refused a journey (HTTP {result.get('status')}"
+                    + (f": {detail}" if detail else "")
+                    + f"); {len(templates)} were planned. Check the day by hand."
                 )
 
         # Never trust the submit: confirm by re-reading, as the AFAS side does.
-        if day in self.read_month(day.year, day.month):
+        if self._journeys_by_day(day.year, day.month).get(day, 0) >= expected:
             return FileResult(day, self.system, FileOutcome.FILED,
                               f"{len(templates)} journey(s)")
         return FileResult(

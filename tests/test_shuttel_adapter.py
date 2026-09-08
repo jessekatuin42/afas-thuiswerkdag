@@ -120,3 +120,59 @@ def test_missing_template_configuration_fails_loudly():
     result = ShuttelAdapter(api, template_ids=("T-OUT",)).file(D)
     assert result.outcome is FileOutcome.FAILED
     assert "template" in result.message.lower()
+
+
+def test_a_refusal_carries_the_servers_explanation():
+    """A bare status code sends you guessing. Shuttel answers RFC 7807 problem
+    documents, and the 'detail' field is the whole diagnosis."""
+    class Refusing(FakeApi):
+        def post(self, path, payload):
+            self.posted.append(payload)
+            return {"status": 409, "body": {
+                "title": "Conflict",
+                "detail": "Transaction overlaps an existing one",
+            }}
+
+    result = adapter(Refusing()).file(D)
+    assert result.outcome is FileOutcome.FAILED
+    assert "409" in result.message
+    assert "overlaps an existing one" in result.message
+
+
+def test_journeys_go_to_the_transaction_endpoint_not_the_declaration_one():
+    """/api/v1/transaction/declaration is the *expense* endpoint and answers
+    409 'Declaration does not have an attachment' for a journey. Journeys go to
+    /api/v1/transaction/."""
+    class PathRecording(FakeApi):
+        def __init__(self):
+            super().__init__()
+            self.paths = []
+
+        def post(self, path, payload):
+            self.paths.append(path)
+            return super().post(path, payload)
+
+    api = PathRecording()
+    adapter(api).file(D)
+    assert api.paths == ["/api/v1/transaction/"] * 2
+
+
+def test_a_day_missing_one_leg_is_refused_rather_than_topped_up():
+    """A half-filed day must not be reported done, and must not be completed
+    blindly either: posting the full set again would duplicate the leg that is
+    already there. Surface it instead."""
+    api = FakeApi(transactions=[tx(D, 8)])          # outbound only
+    result = adapter(api).file(D)
+    assert result.outcome is FileOutcome.FAILED
+    assert "1 of 2" in result.message
+    assert api.posted == []
+
+
+def test_a_complete_day_is_reported_already():
+    api = FakeApi(transactions=[tx(D, 8), tx(D, 17)])
+    assert adapter(api).file(D).outcome is FileOutcome.ALREADY
+
+
+def test_read_month_does_not_report_a_partly_filed_day_as_done():
+    api = FakeApi(transactions=[tx(D, 8)])
+    assert adapter(api).read_month(2026, 9) == {}
