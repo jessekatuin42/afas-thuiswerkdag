@@ -19,3 +19,6 @@ config.local.toml
 
 # Container-side browser session (seeded copy of .browser-profile)
 .browser-profile-docker/
+
+# Local planner database (your plan and sync history)
+data/
