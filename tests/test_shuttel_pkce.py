@@ -170,3 +170,45 @@ def test_no_credentials_and_no_stored_token_says_to_log_in(tmp_path):
     with pytest.raises(ShuttelAuthError) as exc:
         client.access_token()
     assert "shuttel_login" in str(exc.value)
+
+
+def test_a_rejected_stored_token_is_not_reported_as_bad_credentials(tmp_path):
+    """Falling back silently made an expired refresh token look like a wrong
+    password, which sends you to re-check credentials that were fine."""
+    store = TokenStore(tmp_path / "t.json")
+    store.save("STALE")
+    t = transport(httpx.Response(400, json={"error": "invalid_grant"}))
+    client = TokenClient(ShuttelCredentials(), transport=t, store=store)
+    with pytest.raises(ShuttelAuthError) as exc:
+        client.access_token()
+    msg = str(exc.value)
+    assert "stored refresh token was rejected" in msg
+    assert "shuttel_login" in msg
+
+
+def test_no_session_at_all_points_at_the_login_tool_not_at_the_password(tmp_path):
+    """The password grant is known not to work for this realm's direct flow,
+    so a bare 'invalid credentials' is the wrong thing to lead with."""
+    store = TokenStore(tmp_path / "t.json")
+    t = transport(httpx.Response(400, json={
+        "error": "invalid_grant", "error_description": "Invalid user credentials"}))
+    client = TokenClient(
+        ShuttelCredentials(username="u@x.invalid", password="p"),
+        transport=t, store=store)
+    with pytest.raises(ShuttelAuthError) as exc:
+        client.access_token()
+    assert "shuttel_login" in str(exc.value)
+
+
+def test_a_stale_token_still_falls_back_to_a_working_password(tmp_path):
+    """The fallback stays useful for accounts whose direct grant does work."""
+    store = TokenStore(tmp_path / "t.json")
+    store.save("STALE")
+    t = transport(
+        httpx.Response(400, json={"error": "invalid_grant"}),
+        token_response(access="viaPassword"),
+    )
+    client = TokenClient(
+        ShuttelCredentials(username="u@x.invalid", password="p"),
+        transport=t, store=store)
+    assert client.access_token() == "viaPassword"

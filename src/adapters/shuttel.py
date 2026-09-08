@@ -181,12 +181,32 @@ class TokenClient:
     def access_token(self) -> str:
         if self._access and time.time() < self._expires_at - _EXPIRY_MARGIN_S:
             return self._access
-        if self._refresh and self._try_refresh():
-            return self._access
+
+        # Report which path failed. Falling through silently made an expired
+        # refresh token look like a wrong password, and a rejected password
+        # look like the only problem -- both send you to fix the wrong thing.
+        tried: list[str] = []
+
+        if self._refresh:
+            if self._try_refresh():
+                return self._access
+            tried.append(
+                "the stored refresh token was rejected (expired, revoked, or "
+                "already rotated by another run)"
+            )
+
         if self._creds.complete:
-            return self._password_grant()
+            try:
+                return self._password_grant()
+            except ShuttelAuthError as exc:
+                tried.append(str(exc))
+        else:
+            tried.append("no SHUTTEL_USERNAME / SHUTTEL_PASSWORD set")
+
+        detail = "".join(f"\n  - {t}" for t in tried)
         raise ShuttelAuthError(
-            "No usable Shuttel session. Run:  python tools/shuttel_login.py"
+            "No usable Shuttel session." + detail +
+            "\n\nRun:  python tools/shuttel_login.py"
         )
 
     def exchange_code(self, code: str, verifier: str) -> str:
