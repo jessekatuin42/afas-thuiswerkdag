@@ -76,6 +76,10 @@ def create_app(
         return [date(year, month, d)
                 for d in range(1, calendar.monthrange(year, month)[1] + 1)]
 
+    # Office days are the working week minus the home days, derived rather
+    # than configured: a second setting for the same fact would drift.
+    office_days = tuple(d for d in (1, 2, 3, 4, 5) if d not in home_days)
+
     @app.get("/api/month/{year}/{month}")
     def month(year: int, month: int):
         plan = store.get_plan(year, month)
@@ -106,6 +110,8 @@ def create_app(
             },
             "home_weekdays": list(home_days),
             "home_weekday_names": [WEEKDAY_NAMES[d] for d in home_days],
+            "office_weekdays": list(office_days),
+            "office_weekday_names": [WEEKDAY_NAMES[d] for d in office_days],
         }
 
     @app.put("/api/day/{iso}")
@@ -120,18 +126,20 @@ def create_app(
         return {"ok": True, "count": len(body.dates)}
 
     @app.post("/api/fill/{year}/{month}")
-    def fill(year: int, month: int):
-        """Mark every configured home weekday in the month.
+    def fill(year: int, month: int, intent: str = "home"):
+        """Mark every weekday of the given kind in the month.
 
         Additive on purpose: it never clears a day you marked by hand, so
         pressing it twice cannot lose work.
         """
-        days = [d for d in month_days(year, month)
-                if d.isoweekday() in home_days]
+        if intent not in ("home", "office"):
+            raise HTTPException(status_code=422, detail=f"unknown intent {intent!r}")
+        wanted = home_days if intent == "home" else office_days
+        days = [d for d in month_days(year, month) if d.isoweekday() in wanted]
         for day in days:
-            store.set_intent(day, Intent.HOME)
+            store.set_intent(day, Intent(intent))
         return {"count": len(days),
-                "weekdays": [WEEKDAY_NAMES[d] for d in home_days]}
+                "weekdays": [WEEKDAY_NAMES[d] for d in wanted]}
 
     @app.post("/api/refresh/{year}/{month}")
     def refresh(year: int, month: int):

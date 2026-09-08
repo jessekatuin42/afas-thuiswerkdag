@@ -218,3 +218,31 @@ def test_a_custom_weekday_set_is_honoured(tmp_path):
     marked = [d for d in c.get("/api/month/2026/9").json()["days"]
               if d["intent"] == "home"]
     assert {d["weekday"] for d in marked} == {0, 4}
+
+
+def test_fill_can_target_office_days_as_the_complement_of_home_days(client):
+    """Home days come from AFAS_DAYS; the rest of the working week is office.
+    Deriving it avoids a second setting that can drift out of step."""
+    resp = client.post("/api/fill/2026/9?intent=office")
+    assert resp.status_code == 200
+    days = client.get("/api/month/2026/9").json()["days"]
+    office = [d for d in days if d["intent"] == "office"]
+    # Mon=0 and Fri=4 in Python's weekday numbering
+    assert {d["weekday"] for d in office} == {0, 4}
+    assert not [d for d in days if d["intent"] == "home"]
+
+
+def test_fill_still_defaults_to_home(client):
+    client.post("/api/fill/2026/9")
+    days = client.get("/api/month/2026/9").json()["days"]
+    assert {d["weekday"] for d in days if d["intent"] == "home"} == {1, 2, 3}
+
+
+def test_the_month_view_advertises_the_office_weekdays_too(client):
+    body = client.get("/api/month/2026/9").json()
+    assert body["office_weekdays"] == [1, 5]
+    assert body["office_weekday_names"] == ["Mon", "Fri"]
+
+
+def test_an_unknown_fill_intent_is_rejected(client):
+    assert client.post("/api/fill/2026/9?intent=holiday").status_code == 422
