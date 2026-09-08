@@ -44,10 +44,11 @@ COPY tools/ ./tools/
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 COPY pytest.ini ./
+COPY web/ ./web/
 
 # src/config.py hard-codes both paths relative to the project root, so these
 # are the mount points. Created here so an unmounted run still works.
-RUN mkdir -p /app/.browser-profile /app/artifacts && chown -R pwuser:pwuser /app
+RUN mkdir -p /app/.browser-profile /app/artifacts /app/data && chown -R pwuser:pwuser /app
 
 # Chromium's sandbox stays enabled, which means not running as root.
 # Run with --userns=keep-id (rootless podman) so bind-mounted host files

@@ -1,0 +1,28 @@
+services:
+  planner:
+    build:
+      context: .
+    # The image's ENTRYPOINT is the one-shot CLI, so `command` alone would be
+    # appended to it and parsed as CLI arguments. Replace the entrypoint
+    # outright -- an empty list is not honoured by every compose provider.
+    entrypoint: ["python", "-m", "uvicorn"]
+    # SECURITY, and the two halves are not interchangeable:
+    #
+    #   host side  -> 127.0.0.1:8765  is the actual boundary. This is what
+    #                 keeps the dashboard off the LAN. Never make it 8765:8765.
+    #   guest side -> 0.0.0.0         is required, not a weakening. A process
+    #                 bound to 127.0.0.1 inside a container answers only on the
+    #                 container's own loopback, which a published port never
+    #                 reaches, so the app would simply be unreachable.
+    ports:
+      - "127.0.0.1:8765:8765"
+    command: ["web.main:app", "--host", "0.0.0.0", "--port", "8765"]
+    environment:
+      TZ: Europe/Amsterdam
+    shm_size: 1g                 # Chromium dies on the default 64 MB
+    userns_mode: "keep-id:uid=1001,gid=1001"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./.browser-profile-docker:/app/.browser-profile
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
