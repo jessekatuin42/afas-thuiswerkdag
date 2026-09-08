@@ -18,3 +18,4 @@ Dockerfile
 .dockerignore
 .browser-profile-docker/
 .shuttel-token.json
+.shuttel-browser-profile/

@@ -247,3 +247,20 @@ def test_a_matching_state_is_accepted():
 def test_state_is_only_enforced_when_we_have_one_to_compare():
     url = "https://mijn.shuttel.nl/robots.txt?state=ANY&code=C"
     assert extract_code(url) == "C"
+
+
+def test_the_callback_is_recognised_only_once_it_carries_a_code():
+    """The browser sits on the auth endpoint, then the login page, then the
+    redirect. Only the last of those is worth acting on."""
+    from src.adapters.shuttel import is_callback
+
+    assert not is_callback("https://mijn.shuttel.nl/auth/realms/shuttel/protocol/"
+                           "openid-connect/auth?client_id=shuttel-portal")
+    assert not is_callback("https://mijn.shuttel.nl/robots.txt")
+    assert is_callback("https://mijn.shuttel.nl/robots.txt?state=s&code=abc")
+
+
+def test_an_error_redirect_counts_as_finished_so_it_can_be_reported():
+    from src.adapters.shuttel import is_callback
+
+    assert is_callback("https://mijn.shuttel.nl/robots.txt?error=access_denied")

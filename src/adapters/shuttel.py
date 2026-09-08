@@ -130,6 +130,18 @@ def authorize_url(verifier: str, state: str | None = None,
     return f"{base_url.rstrip('/')}{_AUTH_PATH}?{urlencode(params)}"
 
 
+def is_callback(url: str, redirect_uri: str = REDIRECT_URI) -> bool:
+    """Has the browser arrived at the redirect with a result?
+
+    Watching for the path alone is not enough: the redirect target is a real
+    page that can be reached without a code.
+    """
+    if not url.startswith(redirect_uri):
+        return False
+    query = parse_qs(urlparse(url).query)
+    return "code" in query or "error" in query
+
+
 def extract_code(pasted: str, expected_state: str | None = None) -> str:
     """Pull the authorization code out of a pasted callback URL, or accept a
     bare code. Reports an error callback rather than returning empty.

@@ -25,3 +25,6 @@ data/
 
 # Shuttel refresh token -- a credential. NEVER commit.
 .shuttel-token.json
+
+# Shuttel login browser profile
+.shuttel-browser-profile/
