@@ -558,10 +558,15 @@ class ShuttelAdapter:
 
     # -- reading ----------------------------------------------------------
 
-    def _journeys_by_day(self, year: int, month: int) -> dict[date, int]:
-        """How many commute journeys each day already has."""
+    def _journeys_by_day(self, year: int, month: int) -> dict[date, dict]:
+        """Per day: how many commute journeys, their value and their distance.
+
+        settlement_net is what Shuttel says it will pay. Deriving a
+        euro-per-kilometre rate here instead would go silently wrong the day
+        the rate changes, and the figure feeds a money counter.
+        """
         lo, hi = _month_range(year, month)
-        counts: dict[date, int] = {}
+        counts: dict[date, dict] = {}
         for page in range(_MAX_PAGES):
             result = self._api.get(
                 f"{_TX_PATH}?costTypes={COMMUTE_COST_TYPE}&fromDate={lo}"
@@ -581,7 +586,14 @@ class ShuttelAdapter:
                 except ValueError:
                     continue
                 if when.year == year and when.month == month:
-                    counts[when] = counts.get(when, 0) + 1
+                    acc = counts.setdefault(when, {"n": 0, "eur": 0.0, "km": 0.0})
+                    acc["n"] += 1
+                    acc["eur"] += float(item.get("settlement_net") or 0.0)
+                    acc["km"] += float(
+                        item.get("mileage_commute")
+                        or (item.get("quantities") or [{}])[0].get("amount")
+                        or 0.0
+                    )
             if body.get("number", 0) + 1 >= (body.get("totalPages") or 1):
                 break
         return counts
@@ -596,9 +608,10 @@ class ShuttelAdapter:
         """
         expected = max(len(self._template_ids), 1)
         return {
-            day: Entry(day=day, summary=f"{n} commute journey(s)")
-            for day, n in self._journeys_by_day(year, month).items()
-            if n >= expected
+            day: Entry(day=day, summary=f"{acc['n']} commute journey(s)",
+                       amount=acc["eur"] or None, km=acc["km"] or None)
+            for day, acc in self._journeys_by_day(year, month).items()
+            if acc["n"] >= expected
         }
 
     # -- writing ----------------------------------------------------------
@@ -606,7 +619,7 @@ class ShuttelAdapter:
     def file(self, day: date) -> FileResult:
         templates = self.templates()
         expected = max(len(self._template_ids), 1)
-        existing = self._journeys_by_day(day.year, day.month).get(day, 0)
+        existing = self._journeys_by_day(day.year, day.month).get(day, {}).get("n", 0)
 
         if existing >= expected:
             return FileResult(day, self.system, FileOutcome.ALREADY,
@@ -652,7 +665,7 @@ class ShuttelAdapter:
                 )
 
         # Never trust the submit: confirm by re-reading, as the AFAS side does.
-        if self._journeys_by_day(day.year, day.month).get(day, 0) >= expected:
+        if self._journeys_by_day(day.year, day.month).get(day, {}).get("n", 0) >= expected:
             return FileResult(day, self.system, FileOutcome.FILED,
                               f"{len(templates)} journey(s)")
         return FileResult(

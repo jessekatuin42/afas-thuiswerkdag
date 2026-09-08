@@ -10,6 +10,7 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
+from .earnings import Observation
 from .model import DayState, Intent
 
 _SCHEMA = """
@@ -24,6 +25,8 @@ CREATE TABLE IF NOT EXISTS state_cache (
     present INTEGER NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     read_at TEXT NOT NULL,
+    amount  REAL,
+    km      REAL,
     PRIMARY KEY (date, system)
 );
 CREATE TABLE IF NOT EXISTS sync_run (
@@ -56,7 +59,22 @@ class PlanStore:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns to a state_cache that predates them.
+
+        CREATE TABLE IF NOT EXISTS silently leaves an existing table alone, so
+        an install from before the money counter would keep a table without
+        amount/km and every read would fail on a missing column.
+        """
+        have = {r["name"] for r in
+                self._conn.execute("PRAGMA table_info(state_cache)").fetchall()}
+        for column in ("amount", "km"):
+            if column not in have:
+                self._conn.execute(
+                    f"ALTER TABLE state_cache ADD COLUMN {column} REAL")
 
     # -- plan -------------------------------------------------------------
 
@@ -82,15 +100,60 @@ class PlanStore:
 
     # -- state cache ------------------------------------------------------
 
-    def set_state(self, day: date, system: str, present: bool, summary: str = "") -> None:
+    def set_state(
+        self,
+        day: date,
+        system: str,
+        present: bool,
+        summary: str = "",
+        amount: float | None = None,
+        km: float | None = None,
+    ) -> None:
         self._conn.execute(
-            "INSERT INTO state_cache (date, system, present, summary, read_at) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(date, system) DO UPDATE SET "
+            "INSERT INTO state_cache (date, system, present, summary, read_at, "
+            "amount, km) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(date, system) DO UPDATE SET "
             "present = excluded.present, summary = excluded.summary, "
-            "read_at = excluded.read_at",
-            (day.isoformat(), system, int(present), summary, datetime.now().isoformat()),
+            "read_at = excluded.read_at, amount = excluded.amount, km = excluded.km",
+            (day.isoformat(), system, int(present), summary,
+             datetime.now().isoformat(), amount, km),
         )
         self._conn.commit()
+
+    def mark_present(self, day: date, system: str, summary: str = "") -> None:
+        """Record that a day is present, leaving its money figures alone.
+
+        Filing proves the day exists; it says nothing about what it is worth.
+        Going through set_state would write NULL over an amount the last read
+        established, quietly shrinking the counter.
+        """
+        self._conn.execute(
+            "INSERT INTO state_cache (date, system, present, summary, read_at) "
+            "VALUES (?, ?, 1, ?, ?) ON CONFLICT(date, system) DO UPDATE SET "
+            "present = 1, summary = excluded.summary, read_at = excluded.read_at",
+            (day.isoformat(), system, summary, datetime.now().isoformat()),
+        )
+        self._conn.commit()
+
+    def get_observations(
+        self, start: date, end: date
+    ) -> dict[tuple[date, str], Observation]:
+        """Read-back state over an arbitrary inclusive range.
+
+        A range rather than a month because the pay period runs 25th to 24th
+        and straddles two calendar months.
+        """
+        rows = self._conn.execute(
+            "SELECT date, system, present, amount, km FROM state_cache "
+            "WHERE date >= ? AND date <= ?",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        return {
+            (date.fromisoformat(r["date"]), r["system"]): Observation(
+                present=bool(r["present"]), amount=r["amount"], km=r["km"]
+            )
+            for r in rows
+        }
 
     def get_state(self, year: int, month: int) -> dict[date, DayState]:
         lo, hi = _month_bounds(year, month)

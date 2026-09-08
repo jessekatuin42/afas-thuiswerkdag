@@ -27,6 +27,11 @@ class Entry:
 
     day: date
     summary: str = ""
+    #: What the system says the day is worth, in euro, and how far it was
+    #: driven. Read back rather than computed: a rate change should show up on
+    #: its own instead of making every figure quietly wrong.
+    amount: float | None = None
+    km: float | None = None
 
 
 @dataclass(frozen=True)

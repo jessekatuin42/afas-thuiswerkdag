@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from src.adapters.afas_adapter import AfasAdapter
 from src.adapters.base import FileOutcome
 from src.afas import AfasRefusedError
@@ -99,3 +101,28 @@ def test_file_never_passes_dry_run_true():
 
     AfasAdapter(Recording(), LABELS).file(D1)
     assert seen["dry_run"] is False
+
+
+def test_read_month_carries_the_amount_afas_reports(monkeypatch):
+    """The 2 euro is read from the grid, not hardcoded: if the rate changes,
+    the counter should follow rather than quietly stay wrong."""
+    import src.adapters.afas_adapter as mod
+
+    monkeypatch.setattr(mod, "summarize_thuiswerkdagen",
+                        lambda rows, labels: [decl(D1)])
+    entries = AfasAdapter(FakeAfas(rows=[object()]), LABELS).read_month(2026, 9)
+    assert entries[D1].amount == 2.0
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("2,00", 2.0),            # Dutch decimal comma, as AFAS renders it
+    ("2.00", 2.0),
+    ("€ 2,00", 2.0),
+    ("1.234,56", 1234.56),    # Dutch thousands separator
+    ("", None),
+    ("n/a", None),
+])
+def test_amount_parsing(raw, expected):
+    from src.adapters.afas_adapter import parse_amount
+
+    assert parse_amount(raw) == expected

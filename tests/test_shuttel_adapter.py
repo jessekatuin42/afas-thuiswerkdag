@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from src.adapters.base import FileOutcome
 from src.adapters.shuttel import ShuttelAdapter
 
@@ -176,3 +178,36 @@ def test_a_complete_day_is_reported_already():
 def test_read_month_does_not_report_a_partly_filed_day_as_done():
     api = FakeApi(transactions=[tx(D, 8)])
     assert adapter(api).read_month(2026, 9) == {}
+
+
+def tx_money(day: date, hour: int, net=55.5, km=222.0):
+    return {"startsOn": f"{day.isoformat()}T{hour:02d}:00:00.000+02:00",
+            "costType": "commute", "settlement_net": net,
+            "mileage_commute": km, "quantities": [{"amount": km, "unit": "km"}]}
+
+
+def test_read_month_sums_both_legs_of_a_day():
+    """An office day is two journeys, so its value and distance are the pair's
+    total, not one leg's."""
+    api = FakeApi(transactions=[tx_money(D, 8), tx_money(D, 17)])
+    entry = adapter(api).read_month(2026, 9)[D]
+    assert entry.amount == pytest.approx(111.0)
+    assert entry.km == pytest.approx(444.0)
+
+
+def test_the_amount_comes_from_settlement_net_not_a_computed_rate():
+    """Shuttel reports what it will pay. Deriving euro-per-kilometre ourselves
+    would go silently wrong the day the rate changes."""
+    api = FakeApi(transactions=[tx_money(D, 8, net=60.0, km=222.0),
+                                tx_money(D, 17, net=60.0, km=222.0)])
+    assert adapter(api).read_month(2026, 9)[D].amount == pytest.approx(120.0)
+
+
+def test_a_journey_without_money_fields_contributes_distance_only():
+    api = FakeApi(transactions=[{"startsOn": f"{D.isoformat()}T08:00:00.000+02:00",
+                                 "costType": "commute",
+                                 "quantities": [{"amount": 222.0, "unit": "km"}]},
+                                tx_money(D, 17)])
+    entry = adapter(api).read_month(2026, 9)[D]
+    assert entry.km == pytest.approx(444.0)
+    assert entry.amount == pytest.approx(55.5)

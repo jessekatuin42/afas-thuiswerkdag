@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
+from src.planner.earnings import earnings as compute_earnings, period_for
 from src.planner.engine import SyncEngine
 from src.planner.model import (
     DEFAULT_HOME_DAYS,
@@ -54,6 +55,14 @@ class BulkIntentBody(IntentBody):
             except ValueError:
                 raise ValueError(f"not a date: {iso!r}") from None
         return v
+
+
+def _parse_default_amount(engine: SyncEngine) -> float:
+    """AFAS's flat per-day amount, from config rather than a literal here."""
+    from src.config import DEFAULT_AMOUNT
+    from src.adapters.afas_adapter import parse_amount
+
+    return parse_amount(DEFAULT_AMOUNT) or 2.0
 
 
 def _parse_day(iso: str) -> date:
@@ -182,6 +191,53 @@ def create_app(
                 {**r, "date": r["date"].isoformat()}
                 for r in store.get_run_results(run_id)
             ],
+        }
+
+    @app.get("/api/earnings")
+    def earnings(on: str | None = None):
+        """What this pay period is worth so far, and what the plan would add.
+
+        Computed from the read-back cache rather than by querying both systems,
+        so it is instant -- and therefore only as fresh as the last Check. The
+        response says when each system was last read so that is visible.
+        """
+        day = _parse_day(on) if on else date.today()
+        start, end = period_for(day)
+        plan: dict[date, Intent] = {}
+        cursor = start
+        while cursor <= end:
+            plan.update(store.get_plan(cursor.year, cursor.month))
+            cursor = date(cursor.year + (cursor.month == 12),
+                          cursor.month % 12 + 1, 1)
+
+        result = compute_earnings(
+            observed=store.get_observations(start, end),
+            plan={d: i for d, i in plan.items() if start <= d <= end},
+            start=start, end=end,
+            # AFAS pays a flat amount, so a period with nothing filed yet is
+            # still projectable. Shuttel's depends on the route, so it is not.
+            defaults={"afas": _parse_default_amount(engine)},
+        )
+        return {
+            "start": result.start.isoformat(),
+            "end": result.end.isoformat(),
+            "eur": round(result.eur, 2),
+            "km": round(result.km, 1),
+            "projected_eur": round(result.projected_eur, 2),
+            "estimated": result.estimated,
+            "incomplete": result.incomplete,
+            "per_system": {
+                s: {"filed_days": a.filed_days, "priced_days": a.priced_days,
+                    "eur": round(a.eur, 2),
+                    "km": round(a.km, 1),
+                    "planned_unfiled_days": a.planned_unfiled_days,
+                    "projected_eur": round(a.projected_eur, 2)}
+                for s, a in result.per_system.items()
+            },
+            "read_at": {
+                s: (t.isoformat() if (t := store.state_read_at(s)) else None)
+                for s in ("afas", "shuttel")
+            },
         }
 
     @app.get("/")

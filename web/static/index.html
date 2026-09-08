@@ -49,6 +49,13 @@
   button:disabled { opacity: .4; cursor: default; }
   button.primary:not(:disabled) { border-color: var(--home); color: var(--home);
                                   font-weight: 600; }
+  .money { margin-top: 1rem; padding: .7rem .9rem; border: 1px solid var(--line);
+           border-radius: 8px; display: flex; gap: 1.6rem; flex-wrap: wrap;
+           align-items: baseline; }
+  .money .big { font-size: 1.45rem; font-weight: 650; letter-spacing: -.01em; }
+  .money .cap { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+                opacity: .55; display: block; }
+  .money .sub { font-size: .78rem; opacity: .7; }
   .msg { margin-top: 1rem; font-size: .82rem; opacity: .8; min-height: 2.4em;
          white-space: pre-wrap; }
   .spin { display: inline-block; width: .7em; height: .7em; margin-right: .4em;
@@ -74,6 +81,7 @@
 </div>
 <div class="grid" id="dow"></div>
 <div class="grid" id="grid"></div>
+<div class="money" id="money" hidden></div>
 <div class="msg" id="msg"></div>
 
 <script>
@@ -157,9 +165,47 @@ function render() {
     : read);
 }
 
+const eur = (n) => "\u20ac" + n.toFixed(2);
+
+async function loadEarnings() {
+  let e;
+  try { e = await j("/api/earnings"); } catch { return; }
+  const from = new Date(e.start).toLocaleDateString(undefined,
+    { day: "numeric", month: "short" });
+  const to = new Date(e.end).toLocaleDateString(undefined,
+    { day: "numeric", month: "short" });
+  const afas = e.per_system.afas || {}, sh = e.per_system.shuttel || {};
+
+  const parts = [
+    `<div><span class="cap">${from} - ${to}</span>` +
+      `<span class="big">${eur(e.eur)}</span></div>`,
+    `<div><span class="cap">driven</span>` +
+      `<span class="big">${e.km.toFixed(0)} km</span></div>`,
+    `<div class="sub"><span class="cap">so far</span>` +
+      // "7 x EUR14.00" reads as seven times fourteen. It is seven days
+      // totalling fourteen, so say that.
+      `AFAS ${afas.filed_days || 0} day(s), ${eur(afas.eur || 0)}<br>` +
+      `Shuttel ${sh.filed_days || 0} day(s), ${eur(sh.eur || 0)}</div>`,
+  ];
+  // Only worth showing when the plan would actually add something, and only
+  // ever labelled a projection -- it is not money anyone owes you yet.
+  if (e.projected_eur > e.eur + 0.005) {
+    parts.push(`<div class="sub"><span class="cap">if you sync the plan` +
+      `${e.estimated ? " (estimated)" : ""}</span>` +
+      `<span class="big">${eur(e.projected_eur)}</span></div>`);
+  }
+  if (e.incomplete.length) {
+    parts.push(`<div class="sub"><span class="cap">not projectable</span>` +
+      `${e.incomplete.join(", ")}: nothing filed yet to price it from</div>`);
+  }
+  $("money").innerHTML = parts.join("");
+  $("money").hidden = false;
+}
+
 async function load() {
   data = await j(`/api/month/${year}/${month}`);
   render();
+  loadEarnings();
   // First look at a month costs a browser launch, so do it once, on its own,
   // rather than making every page view wait 40s.
   if (!data.read_at.afas && autoCheckedFor !== key()) {

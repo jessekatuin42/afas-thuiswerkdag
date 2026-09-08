@@ -246,3 +246,40 @@ def test_the_month_view_advertises_the_office_weekdays_too(client):
 
 def test_an_unknown_fill_intent_is_rejected(client):
     assert client.post("/api/fill/2026/9?intent=holiday").status_code == 422
+
+
+def test_earnings_reports_the_current_pay_period(client):
+    body = client.get("/api/earnings").json()
+    assert body["start"] and body["end"]
+    from src.planner.earnings import period_for
+    from datetime import date as _d
+    start, end = period_for(_d.today())
+    assert body["start"] == start.isoformat()
+    assert body["end"] == end.isoformat()
+
+
+def test_earnings_can_be_asked_about_a_specific_day(client):
+    body = client.get("/api/earnings?on=2026-09-08").json()
+    assert body["start"] == "2026-08-25"
+    assert body["end"] == "2026-09-24"
+
+
+def test_earnings_totals_what_was_read_back(client):
+    client.app.state.store.set_state(date(2026, 9, 1), "afas", True, "", amount=2.0)
+    client.app.state.store.set_state(date(2026, 9, 4), "shuttel", True, "",
+                                     amount=111.0, km=444.0)
+    body = client.get("/api/earnings?on=2026-09-08").json()
+    assert body["eur"] == pytest.approx(113.0)
+    assert body["km"] == pytest.approx(444.0)
+    assert body["per_system"]["afas"]["eur"] == pytest.approx(2.0)
+
+
+def test_earnings_excludes_days_from_the_previous_period(client):
+    client.app.state.store.set_state(date(2026, 8, 21), "shuttel", True, "",
+                                     amount=111.0, km=444.0)
+    body = client.get("/api/earnings?on=2026-09-08").json()
+    assert body["eur"] == pytest.approx(0.0)
+
+
+def test_a_bad_date_on_earnings_is_rejected(client):
+    assert client.get("/api/earnings?on=nonsense").status_code == 422

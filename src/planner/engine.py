@@ -53,8 +53,12 @@ class SyncEngine:
                 continue
             for day in _days_in_month(year, month):
                 entry = entries.get(day)
-                self._store.set_state(day, system, entry is not None,
-                                      entry.summary if entry else "")
+                self._store.set_state(
+                    day, system, entry is not None,
+                    entry.summary if entry else "",
+                    amount=entry.amount if entry else None,
+                    km=entry.km if entry else None,
+                )
             status[system] = f"read {len(entries)} entr(y/ies)"
         return status
 
@@ -94,7 +98,9 @@ class SyncEngine:
                                       result.outcome.value, result.message)
 
             if result.outcome in _SETTLED:
-                self._store.set_state(action.day, system, True, result.message)
+                # mark_present, not set_state: filing proves the day exists but
+                # not what it is worth, and set_state would null the amount.
+                self._store.mark_present(action.day, system, result.message)
                 continue
 
             if result.outcome is FileOutcome.UNVERIFIED:

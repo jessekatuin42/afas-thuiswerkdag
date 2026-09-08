@@ -7,12 +7,33 @@ not modified.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from ..afas import AfasInSite, AfasRefusedError
 from ..detection import summarize_thuiswerkdagen
 from ..models import Outcome
 from .base import Entry, FileOutcome, FileResult
+
+def parse_amount(raw: str) -> float | None:
+    """Read AFAS's rendered total, which uses Dutch conventions.
+
+    "2,00" and "1.234,56" both appear, so the comma is the decimal separator
+    and the dot groups thousands. Returns None for anything unparseable rather
+    than guessing a number into a financial total.
+    """
+    if not raw:
+        return None
+    text = re.sub(r"[^\d.,-]", "", raw)
+    if not text:
+        return None
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
 
 _OUTCOME_MAP = {
     Outcome.CREATED: FileOutcome.FILED,
@@ -37,7 +58,8 @@ class AfasAdapter:
         for declaration in summarize_thuiswerkdagen(rows, self._labels):
             d = declaration.date
             if d is not None and d.year == year and d.month == month:
-                found[d] = Entry(day=d, summary=declaration.summary())
+                found[d] = Entry(day=d, summary=declaration.summary(),
+                                 amount=parse_amount(declaration.amount))
         return found
 
     def file(self, day: date) -> FileResult:
