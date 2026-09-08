@@ -1,112 +1,264 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Day planner</title>
+<title>Thuiswerkdagen</title>
 <style>
-  :root { color-scheme: light dark; --line: #8883; }
-  body { font: 14px system-ui, sans-serif; margin: 0; padding: 1.5rem; }
-  h1 { font-size: 1.1rem; margin: 0 0 1rem; }
-  .bar { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
-  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-  .dow { text-align: center; opacity: .6; font-size: .8rem; padding: .25rem; }
-  .cell { border: 1px solid var(--line); border-radius: 6px; padding: .5rem;
-          min-height: 3.5rem; cursor: pointer; user-select: none; }
-  .cell.weekend { opacity: .45; }
-  .cell.home { background: #7c3aed22; border-color: #7c3aed; }
-  .cell.office { background: #2563eb22; border-color: #2563eb; }
-  .num { font-weight: 600; }
-  .tags { font-size: .7rem; opacity: .75; margin-top: .25rem; }
-  .status { margin-top: 1rem; white-space: pre-wrap; font-family: ui-monospace, monospace;
-            font-size: .8rem; }
-  button { font: inherit; padding: .4rem .8rem; border-radius: 6px;
+  :root {
+    color-scheme: light dark;
+    --line: #8883; --home: #7c3aed; --ok: #16a34a; --bad: #dc2626; --busy: #d97706;
+  }
+  body { font: 14px system-ui, sans-serif; margin: 0; padding: 1.5rem;
+         max-width: 60rem; }
+  h1 { font-size: 1.05rem; margin: 0 0 1rem; }
+  .bar { display: flex; gap: .5rem; align-items: center; margin-bottom: .75rem; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .dow { text-align: center; opacity: .55; font-size: .75rem; padding: .2rem; }
+
+  .cell { position: relative; border: 1px solid var(--line); border-radius: 7px;
+          padding: .45rem .5rem; min-height: 3.2rem; cursor: pointer;
+          user-select: none; transition: background .08s, border-color .08s; }
+  .cell.pad { border: none; cursor: default; }
+  .cell.weekend { opacity: .4; }
+  .cell:hover:not(.pad) { border-color: var(--home); }
+
+  /* Planned, not yet filed. */
+  .cell.marked { background: color-mix(in srgb, var(--home) 16%, transparent);
+                 border-color: var(--home); }
+  /* AFAS already holds it -- nothing to do. */
+  .cell.done { background: color-mix(in srgb, var(--ok) 13%, transparent);
+               border-color: var(--ok); }
+
+  .num { font-weight: 600; font-size: .9rem; }
+  .tag { position: absolute; right: .4rem; bottom: .35rem;
+         font-size: .62rem; letter-spacing: .02em; opacity: .85; }
+  .cell.done .tag { color: var(--ok); }
+  .cell.filing .tag { color: var(--busy); }
+  .cell.failed { border-color: var(--bad); }
+  .cell.failed .tag { color: var(--bad); }
+
+  button { font: inherit; padding: .4rem .85rem; border-radius: 7px;
            border: 1px solid var(--line); background: transparent; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary:not(:disabled) { border-color: var(--home); color: var(--home);
+                                  font-weight: 600; }
+  .msg { margin-top: 1rem; font-size: .82rem; opacity: .8; min-height: 2.4em;
+         white-space: pre-wrap; }
+  .spin { display: inline-block; width: .7em; height: .7em; margin-right: .4em;
+          border: 2px solid var(--busy); border-right-color: transparent;
+          border-radius: 50%; animation: r .7s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
 </style>
 
-<h1>Day planner</h1>
+<h1>Thuiswerkdagen</h1>
 <div class="bar">
-  <button id="prev">&lt;</button>
-  <strong id="label"></strong>
-  <button id="next">&gt;</button>
+  <button id="prev" title="Previous month">&lt;</button>
+  <strong id="label" style="min-width:11rem;text-align:center"></strong>
+  <button id="next" title="Next month">&gt;</button>
   <span style="flex:1"></span>
-  <button id="refresh">Refresh state</button>
-  <button id="sync">Sync</button>
+  <button id="refresh">Check AFAS</button>
+  <button id="sync" class="primary" disabled>Sync</button>
 </div>
 <div class="grid" id="dow"></div>
 <div class="grid" id="grid"></div>
-<div class="status" id="status"></div>
+<div class="msg" id="msg"></div>
 
 <script>
-const CYCLE = { none: "home", home: "office", office: "none" };
 let year, month;
+let data = { days: [], actions: [], read_at: {} };
+let paint = null;          // { intent, anchor: idx, cursor: idx }
+let poll = null;           // interval id while a job runs
+let autoCheckedFor = "";   // month we already auto-refreshed, so it fires once
 
 const $ = (id) => document.getElementById(id);
-const setStatus = (t) => { $("status").textContent = t; };
+const key = () => `${year}-${month}`;
+const byDate = (iso) => document.querySelector(`[data-date="${iso}"]`);
 
-function init() {
-  const now = new Date();
-  year = now.getFullYear();
-  month = now.getMonth() + 1;
-  $("dow").innerHTML = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-    .map((d) => `<div class="dow">${d}</div>`).join("");
-  $("prev").onclick = () => { if (--month < 1) { month = 12; year--; } load(); };
-  $("next").onclick = () => { if (++month > 12) { month = 1; year++; } load(); };
-  $("refresh").onclick = () => post(`/api/refresh/${year}/${month}`, "Refreshing");
-  $("sync").onclick = () => {
-    if (confirm("File every planned day that is not already present?")) {
-      post(`/api/sync/${year}/${month}`, "Syncing");
-    }
-  };
-  load();
+const j = (url, opts) => fetch(url, opts).then((r) =>
+  r.ok ? r.json() : r.json().then((b) => Promise.reject(b.detail || r.status)));
+
+function msg(text, spinning = false) {
+  $("msg").innerHTML = (spinning ? '<span class="spin"></span>' : "") + text;
 }
 
-async function load() {
-  const data = await (await fetch(`/api/month/${year}/${month}`)).json();
-  $("label").textContent =
-    new Date(year, month - 1, 1).toLocaleString(undefined,
-      { month: "long", year: "numeric" });
+// ---- rendering ------------------------------------------------------------
 
-  const lead = (new Date(year, month - 1, 1).getDay() + 6) % 7;
-  const cells = Array.from({ length: lead }, () => "<div></div>");
+function render() {
+  $("label").textContent = new Date(year, month - 1, 1)
+    .toLocaleString(undefined, { month: "long", year: "numeric" });
 
-  for (const day of data.days) {
-    const tags = [];
-    if (day.afas) tags.push("AFAS");
-    if (day.shuttel) tags.push("Shuttel");
+  const lead = (new Date(year, month - 1, 1).getDay() + 6) % 7;   // Monday-first
+  const cells = Array.from({ length: lead }, () => '<div class="cell pad"></div>');
+
+  for (const d of data.days) {
+    const cls = ["cell"];
+    if (d.weekday > 4) cls.push("weekend");
+    if (d.afas) cls.push("done");
+    else if (d.intent === "home") cls.push("marked");
     cells.push(
-      `<div class="cell ${day.intent} ${day.weekday > 4 ? "weekend" : ""}"
-            data-date="${day.date}">
-         <div class="num">${Number(day.date.slice(-2))}</div>
-         <div class="tags">${tags.join(" &middot; ")}</div>
-       </div>`
+      `<div class="${cls.join(" ")}" data-date="${d.date}">` +
+        `<div class="num">${Number(d.date.slice(-2))}</div>` +
+        `<div class="tag">${d.afas ? "in AFAS" : ""}</div>` +
+      `</div>`
     );
   }
   $("grid").innerHTML = cells.join("");
-  for (const el of document.querySelectorAll(".cell")) el.onclick = () => cycle(el);
 
-  const counts = {};
-  for (const a of data.actions) counts[a.kind] = (counts[a.kind] || 0) + 1;
-  const read = Object.entries(data.read_at)
-    .map(([s, t]) => `${s}: ${t ? new Date(t).toLocaleTimeString() : "never read"}`)
-    .join("   ");
-  setStatus(`state as of  ${read}\n` +
-            `pending: ${JSON.stringify(counts)}`);
+  const todo = data.actions.filter((a) => a.kind === "file").length;
+  const unknown = data.actions.filter((a) => a.kind === "unknown").length;
+  $("sync").disabled = todo === 0;
+  $("sync").textContent = todo ? `File ${todo} day${todo > 1 ? "s" : ""}` : "Sync";
+
+  const read = data.read_at.afas
+    ? `AFAS checked at ${new Date(data.read_at.afas).toLocaleTimeString()}`
+    : "AFAS not checked yet";
+  msg(unknown
+    ? `${read}. ${unknown} marked day(s) can't be filed until AFAS is checked.`
+    : read);
 }
 
-async function cycle(el) {
-  const next = CYCLE[[...el.classList].find((c) => c in CYCLE) || "none"];
-  await fetch(`/api/day/${el.dataset.date}`, {
+async function load() {
+  data = await j(`/api/month/${year}/${month}`);
+  render();
+  // First look at a month costs a browser launch, so do it once, on its own,
+  // rather than making every page view wait 40s.
+  if (!data.read_at.afas && autoCheckedFor !== key()) {
+    autoCheckedFor = key();
+    startRefresh();
+  }
+}
+
+// ---- painting -------------------------------------------------------------
+
+function applyLocally(iso, intent) {
+  const el = byDate(iso);
+  if (!el || el.classList.contains("done")) return;   // already in AFAS
+  el.classList.toggle("marked", intent === "home");
+}
+
+const indexOf = (iso) => data.days.findIndex((d) => d.date === iso);
+
+function span() {
+  return paint.anchor <= paint.cursor
+    ? [paint.anchor, paint.cursor] : [paint.cursor, paint.anchor];
+}
+
+function previewRange() {
+  // Repaint from stored state, then overlay the span. Doing it this way also
+  // lets you drag backwards to shrink a selection before releasing.
+  for (const d of data.days) applyLocally(d.date, d.intent);
+  const [lo, hi] = span();
+  for (let i = lo; i <= hi; i++) applyLocally(data.days[i].date, paint.intent);
+}
+
+$("grid").addEventListener("mousedown", (e) => {
+  const cell = e.target.closest(".cell:not(.pad)");
+  if (!cell || cell.classList.contains("done")) return;
+  e.preventDefault();
+  // Direction is set by the cell you start on: begin on an empty day and you
+  // are adding, begin on a marked one and you are clearing.
+  const intent = cell.classList.contains("marked") ? "none" : "home";
+  const i = indexOf(cell.dataset.date);
+  paint = { intent, anchor: i, cursor: i };
+  previewRange();
+});
+
+$("grid").addEventListener("mouseover", (e) => {
+  if (!paint) return;
+  const cell = e.target.closest(".cell:not(.pad)");
+  if (!cell) return;
+  const i = indexOf(cell.dataset.date);
+  if (i < 0 || i === paint.cursor) return;
+  // Fill the whole span from the anchor rather than only the cells the pointer
+  // happened to enter. mouseover fires per cell landed on, so a quick drag
+  // skips days -- and a silently skipped day is a missing declaration nobody
+  // notices until payroll.
+  paint.cursor = i;
+  previewRange();
+});
+
+document.addEventListener("mouseup", async () => {
+  if (!paint) return;
+  const [lo, hi] = span();
+  const intent = paint.intent;
+  const dates = data.days.slice(lo, hi + 1)
+    .filter((d) => !d.afas)          // already in AFAS: not ours to touch
+    .map((d) => d.date);
+  paint = null;
+  if (!dates.length) return await load();
+  // One request for the whole stroke, not one per day.
+  await j("/api/days", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ intent: next }),
+    body: JSON.stringify({ dates, intent }),
   });
-  load();
+  await load();
+});
+
+// ---- background jobs ------------------------------------------------------
+
+function watch(onDone) {
+  clearInterval(poll);
+  poll = setInterval(async () => {
+    const s = await j("/api/status");
+    if (!s.busy) { clearInterval(poll); poll = null; onDone(s); }
+  }, 900);
 }
 
-async function post(url, verb) {
-  setStatus(`${verb}...`);
-  const body = await (await fetch(url, { method: "POST" })).json();
-  setStatus(JSON.stringify(body, null, 2));
-  load();
+async function startRefresh() {
+  try { await j(`/api/refresh/${year}/${month}`, { method: "POST" }); }
+  catch (e) { return msg(`Busy: ${e}`); }
+  msg("Checking AFAS - this opens a browser and takes about half a minute...", true);
+  watch(async (s) => {
+    await load();
+    if (s.error) msg(`AFAS check failed: ${s.error}`);
+  });
 }
 
-init();
+async function startSync() {
+  let run;
+  try { run = await j(`/api/sync/${year}/${month}`, { method: "POST" }); }
+  catch (e) { return msg(`Busy: ${e}`); }
+
+  const progress = setInterval(async () => {
+    const r = await j(`/api/run/${run.run_id}`);
+    for (const res of r.results) {
+      const el = byDate(res.date);
+      if (!el) continue;
+      el.classList.remove("filing");
+      el.classList.toggle("failed", !["filed", "already"].includes(res.outcome));
+      el.classList.toggle("done", ["filed", "already"].includes(res.outcome));
+      el.querySelector(".tag").textContent = res.outcome;
+    }
+    msg(`Filing... ${r.results.length} done`, true);
+  }, 900);
+
+  msg("Filing...", true);
+  watch(async (s) => {
+    clearInterval(progress);
+    const r = await j(`/api/run/${run.run_id}`);
+    await load();
+    const bad = r.results.filter((x) => !["filed", "already"].includes(x.outcome));
+    if (r.outcome === "stopped_unverified") {
+      msg("STOPPED: AFAS did not confirm a day, so nothing further was filed.\n" +
+          "Check AFAS by hand before syncing again.");
+    } else if (bad.length) {
+      msg(`Filed ${r.results.length - bad.length}, ${bad.length} did not go through:\n` +
+          bad.map((x) => `  ${x.date}: ${x.outcome} ${x.message}`).join("\n"));
+    } else {
+      msg(`Filed ${r.results.length} day(s).` + (s.error ? ` (${s.error})` : ""));
+    }
+  });
+}
+
+// ---- boot -----------------------------------------------------------------
+
+const now = new Date();
+year = now.getFullYear();
+month = now.getMonth() + 1;
+$("dow").innerHTML = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+  .map((d) => `<div class="dow">${d}</div>`).join("");
+$("prev").onclick = () => { if (--month < 1) { month = 12; year--; } load(); };
+$("next").onclick = () => { if (++month > 12) { month = 1; year++; } load(); };
+$("refresh").onclick = startRefresh;
+$("sync").onclick = startSync;
+load();
 </script>

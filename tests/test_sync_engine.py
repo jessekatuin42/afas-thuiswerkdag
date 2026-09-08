@@ -136,3 +136,52 @@ def test_a_reader_that_raises_leaves_that_system_unread_not_empty(store):
     eng.sync(2026, 9)
     assert shuttel.filed == []
     assert "not mapped yet" in status["shuttel"]
+
+
+def test_sync_uses_an_injected_run_id(store):
+    """The API creates the run row first so it can hand the caller a run_id
+    before the work starts; the engine must fill that row rather than open a
+    second one."""
+    afas, shuttel = FakeFiler("afas"), FakeFiler("shuttel")
+    eng = engine(store, afas, shuttel)
+    plan_home(store, D1)
+    eng.refresh_state(2026, 9)
+
+    run_id = store.start_run()
+    report = eng.sync(2026, 9, run_id=run_id)
+
+    assert report.run_id == run_id
+    assert [r["date"] for r in store.get_run_results(run_id)] == [D1]
+
+
+def test_an_injected_run_id_is_still_closed_when_there_is_nothing_to_do(store):
+    afas, shuttel = FakeFiler("afas"), FakeFiler("shuttel")
+    eng = engine(store, afas, shuttel)
+    run_id = store.start_run()
+    report = eng.sync(2026, 9, run_id=run_id)
+    assert report.run_id == run_id
+    assert report.outcome == "nothing_to_do"
+    assert store.get_run(run_id)["outcome"] == "nothing_to_do"
+
+
+def test_results_are_readable_while_a_run_is_still_in_progress(store):
+    """Progress polling reads day_result rows as they land, so the engine must
+    write each day before starting the next rather than batching at the end."""
+    seen: list[int] = []
+
+    class Watching(FakeFiler):
+        def file(self, day):
+            seen.append(len(store.get_run_results(self.run_id)))
+            return super().file(day)
+
+    afas = Watching("afas")
+    eng = engine(store, afas, FakeFiler("shuttel"))
+    plan_home(store, D1, D2, D3)
+    eng.refresh_state(2026, 9)
+    run_id = store.start_run()
+    afas.run_id = run_id
+    eng.sync(2026, 9, run_id=run_id)
+
+    # Nothing recorded before the first day, one before the second, two before
+    # the third: results accumulate as work proceeds.
+    assert seen == [0, 1, 2]

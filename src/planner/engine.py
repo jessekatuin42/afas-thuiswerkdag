@@ -62,14 +62,21 @@ class SyncEngine:
         return diff(self._store.get_plan(year, month),
                     self._store.get_state(year, month))
 
-    def sync(self, year: int, month: int) -> SyncReport:
+    def sync(self, year: int, month: int, run_id: int | None = None) -> SyncReport:
+        """File the month's outstanding days.
+
+        ``run_id`` lets the caller open the run row first, so a background
+        caller can hand out an id to poll before any work has happened. Left
+        None, the run is opened here as usual.
+        """
+        if run_id is None:
+            run_id = self._store.start_run()
+
         actions = to_file(self.preview(year, month))
         if not actions:
-            run_id = self._store.start_run()
             self._store.finish_run(run_id, "nothing_to_do")
             return SyncReport(run_id, "nothing_to_do")
 
-        run_id = self._store.start_run()
         blocked: set[str] = set()
         outcome = "done"
         stopped_reason = ""

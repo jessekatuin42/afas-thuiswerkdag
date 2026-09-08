@@ -144,6 +144,13 @@ class PlanStore:
         )
         self._conn.commit()
 
+    def get_run(self, run_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT id, started_at, finished_at, outcome FROM sync_run WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def get_run_results(self, run_id: int) -> list[dict]:
         rows = self._conn.execute(
             "SELECT date, system, outcome, message FROM day_result "
