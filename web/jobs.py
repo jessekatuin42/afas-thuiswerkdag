@@ -22,6 +22,7 @@ class JobRunner:
         self._kind = ""
         self._run_id: int | None = None
         self._error = ""
+        self._result: object = None
         self._thread: threading.Thread | None = None
 
     def start(
@@ -35,10 +36,14 @@ class JobRunner:
             self._kind = kind
             self._run_id = run_id
             self._error = ""
+            self._result = None
 
         def wrapper() -> None:
             try:
-                fn()
+                # Keep what the job returned. refresh_state reports per-system
+                # status, and discarding it turned a Shuttel authentication
+                # failure into silence.
+                self._result = fn()
             except Exception as exc:
                 # Never let a failed job wedge the runner: one AFAS timeout
                 # would otherwise lock the dashboard until a restart.
@@ -59,4 +64,5 @@ class JobRunner:
                 "kind": self._kind,
                 "run_id": self._run_id,
                 "error": self._error,
+                "result": self._result,
             }

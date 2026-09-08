@@ -23,6 +23,10 @@ services:
     userns_mode: "keep-id:uid=1001,gid=1001"
     volumes:
       - ./.env:/app/.env:ro
+      # Read-write: Keycloak rotates the refresh token and the new one must
+      # survive the container, or the next run falls back to a password grant
+      # this realm's direct flow rejects.
+      - ./.shuttel-token.json:/app/.shuttel-token.json
       - ./.browser-profile-docker:/app/.browser-profile
       - ./artifacts:/app/artifacts
       - ./data:/app/data

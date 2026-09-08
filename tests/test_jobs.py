@@ -95,3 +95,21 @@ def test_a_new_job_clears_the_previous_error():
     assert done.wait(5)
     assert wait_until(lambda: not runner.status()["busy"])
     assert runner.status()["error"] == ""
+
+
+def test_a_jobs_return_value_is_kept_and_reported():
+    """refresh_state returns a per-system status. Dropping it made a Shuttel
+    authentication failure look like nothing happened at all."""
+    runner = JobRunner()
+    runner.start("refresh", lambda: {"afas": "read 3", "shuttel": "no session"})
+    assert wait_until(lambda: not runner.status()["busy"])
+    assert runner.status()["result"] == {"afas": "read 3", "shuttel": "no session"}
+
+
+def test_a_new_job_clears_the_previous_result():
+    runner = JobRunner()
+    runner.start("refresh", lambda: {"afas": "old"})
+    assert wait_until(lambda: not runner.status()["busy"])
+    runner.start("sync", lambda: None)
+    assert wait_until(lambda: not runner.status()["busy"])
+    assert runner.status()["result"] is None

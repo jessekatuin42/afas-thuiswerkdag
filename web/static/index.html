@@ -250,10 +250,19 @@ function watch(onDone) {
 async function startRefresh() {
   try { await j(`/api/refresh/${year}/${month}`, { method: "POST" }); }
   catch (e) { return msg(`Busy: ${e}`); }
-  msg("Checking AFAS - this opens a browser and takes about half a minute...", true);
+  msg("Checking - AFAS opens a browser and takes about half a minute...", true);
   watch(async (s) => {
     await load();
-    if (s.error) msg(`AFAS check failed: ${s.error}`);
+    if (s.error) return msg(`Check failed: ${s.error}`);
+    // refresh_state reports per system. A system that could not be read must
+    // say so: silence here reads as "checked, nothing there", which is the one
+    // thing it does not mean.
+    const problems = Object.entries(s.result || {})
+      .filter(([, v]) => !/^read /.test(String(v)))
+      .map(([k, v]) => `  ${k}: ${v}`);
+    if (problems.length) {
+      msg("Some systems could not be read:\n" + problems.join("\n"));
+    }
   });
 }
 
