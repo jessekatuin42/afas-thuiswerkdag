@@ -3,3 +3,5 @@ pyotp>=2.9          # TOTP 2FA code generation
 python-dotenv>=1.0  # .env credential loading
 pytest>=8.0
 httpx>=0.27         # Shuttel REST + Keycloak token calls
+fastapi>=0.115      # local dashboard
+uvicorn>=0.30       # ASGI server for the dashboard

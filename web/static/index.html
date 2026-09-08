@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Day planner</title>
+<style>
+  :root { color-scheme: light dark; --line: #8883; }
+  body { font: 14px system-ui, sans-serif; margin: 0; padding: 1.5rem; }
+  h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+  .bar { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dow { text-align: center; opacity: .6; font-size: .8rem; padding: .25rem; }
+  .cell { border: 1px solid var(--line); border-radius: 6px; padding: .5rem;
+          min-height: 3.5rem; cursor: pointer; user-select: none; }
+  .cell.weekend { opacity: .45; }
+  .cell.home { background: #7c3aed22; border-color: #7c3aed; }
+  .cell.office { background: #2563eb22; border-color: #2563eb; }
+  .num { font-weight: 600; }
+  .tags { font-size: .7rem; opacity: .75; margin-top: .25rem; }
+  .status { margin-top: 1rem; white-space: pre-wrap; font-family: ui-monospace, monospace;
+            font-size: .8rem; }
+  button { font: inherit; padding: .4rem .8rem; border-radius: 6px;
+           border: 1px solid var(--line); background: transparent; cursor: pointer; }
+</style>
+
+<h1>Day planner</h1>
+<div class="bar">
+  <button id="prev">&lt;</button>
+  <strong id="label"></strong>
+  <button id="next">&gt;</button>
+  <span style="flex:1"></span>
+  <button id="refresh">Refresh state</button>
+  <button id="sync">Sync</button>
+</div>
+<div class="grid" id="dow"></div>
+<div class="grid" id="grid"></div>
+<div class="status" id="status"></div>
+
+<script>
+const CYCLE = { none: "home", home: "office", office: "none" };
+let year, month;
+
+const $ = (id) => document.getElementById(id);
+const setStatus = (t) => { $("status").textContent = t; };
+
+function init() {
+  const now = new Date();
+  year = now.getFullYear();
+  month = now.getMonth() + 1;
+  $("dow").innerHTML = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    .map((d) => `<div class="dow">${d}</div>`).join("");
+  $("prev").onclick = () => { if (--month < 1) { month = 12; year--; } load(); };
+  $("next").onclick = () => { if (++month > 12) { month = 1; year++; } load(); };
+  $("refresh").onclick = () => post(`/api/refresh/${year}/${month}`, "Refreshing");
+  $("sync").onclick = () => {
+    if (confirm("File every planned day that is not already present?")) {
+      post(`/api/sync/${year}/${month}`, "Syncing");
+    }
+  };
+  load();
+}
+
+async function load() {
+  const data = await (await fetch(`/api/month/${year}/${month}`)).json();
+  $("label").textContent =
+    new Date(year, month - 1, 1).toLocaleString(undefined,
+      { month: "long", year: "numeric" });
+
+  const lead = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const cells = Array.from({ length: lead }, () => "<div></div>");
+
+  for (const day of data.days) {
+    const tags = [];
+    if (day.afas) tags.push("AFAS");
+    if (day.shuttel) tags.push("Shuttel");
+    cells.push(
+      `<div class="cell ${day.intent} ${day.weekday > 4 ? "weekend" : ""}"
+            data-date="${day.date}">
+         <div class="num">${Number(day.date.slice(-2))}</div>
+         <div class="tags">${tags.join(" &middot; ")}</div>
+       </div>`
+    );
+  }
+  $("grid").innerHTML = cells.join("");
+  for (const el of document.querySelectorAll(".cell")) el.onclick = () => cycle(el);
+
+  const counts = {};
+  for (const a of data.actions) counts[a.kind] = (counts[a.kind] || 0) + 1;
+  const read = Object.entries(data.read_at)
+    .map(([s, t]) => `${s}: ${t ? new Date(t).toLocaleTimeString() : "never read"}`)
+    .join("   ");
+  setStatus(`state as of  ${read}\n` +
+            `pending: ${JSON.stringify(counts)}`);
+}
+
+async function cycle(el) {
+  const next = CYCLE[[...el.classList].find((c) => c in CYCLE) || "none"];
+  await fetch(`/api/day/${el.dataset.date}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ intent: next }),
+  });
+  load();
+}
+
+async function post(url, verb) {
+  setStatus(`${verb}...`);
+  const body = await (await fetch(url, { method: "POST" })).json();
+  setStatus(JSON.stringify(body, null, 2));
+  load();
+}
+
+init();
+</script>
