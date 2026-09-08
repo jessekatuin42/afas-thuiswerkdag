@@ -9,9 +9,11 @@ from src.adapters.shuttel import (
     redate_template,
 )
 
+# Synthetic ids and placeholder addresses: this repository is public, so no
+# real transaction reference or location belongs in a fixture.
 TEMPLATE = {
     "title": "Autorit",
-    "transactionId": "Shuttel214689977",
+    "transactionId": "Shuttel000000001",
     "referenceId": "ref-1",
     "startsOn": "2026-02-13T08:00:00.000+01:00",
     "endsOn": "2026-02-13T09:59:36.000+01:00",
