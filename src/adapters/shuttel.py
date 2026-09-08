@@ -18,9 +18,16 @@ trip identifiers, for instance) is configuration and must never be committed.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import os
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
@@ -32,6 +39,10 @@ SHUTTEL_CLIENT_ID = "shuttel-portal"
 SHUTTEL_SCOPE = "openid offline_access shuttel_portal_api_user"
 
 _TOKEN_PATH = f"/auth/realms/{SHUTTEL_REALM}/protocol/openid-connect/token"
+_AUTH_PATH = f"/auth/realms/{SHUTTEL_REALM}/protocol/openid-connect/auth"
+
+#: Registered on the client; Keycloak rejects anything else.
+REDIRECT_URI = "https://mijn.shuttel.nl/n/callback"
 
 #: Refresh this many seconds before the token actually expires, so a slow
 #: request cannot land after expiry.
@@ -64,6 +75,89 @@ class ShuttelCredentials:
         return bool(self.username and self.password)
 
 
+# ---------------------------------------------------------------------------
+# Authorization code + PKCE
+#
+# The password grant is a dead end for this account: Keycloak answered
+# "invalid_grant: Invalid user credentials" for credentials that log in fine
+# in a browser. Keycloak runs a *separate* Direct Grant Flow from the Browser
+# Flow, and this realm's direct flow cannot satisfy the account -- so no
+# credential would have fixed it.
+#
+# PKCE costs one browser login, once. After that the offline_access refresh
+# token carries unattended runs and no password is involved at all, which is
+# strictly better than storing one.
+# ---------------------------------------------------------------------------
+
+
+def new_verifier() -> str:
+    """A fresh RFC 7636 code verifier (43-128 chars of the unreserved set)."""
+    return secrets.token_urlsafe(64)[:96]
+
+
+def verifier_challenge(verifier: str) -> str:
+    """S256: unpadded base64url of the SHA-256 digest.
+
+    The padding matters. Leaving '=' on the end fails at the very last step,
+    after the human has already logged in.
+    """
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def authorize_url(verifier: str, state: str | None = None,
+                  base_url: str = SHUTTEL_BASE) -> str:
+    params = {
+        "client_id": SHUTTEL_CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "response_type": "code",
+        "scope": SHUTTEL_SCOPE,
+        "code_challenge": verifier_challenge(verifier),
+        "code_challenge_method": "S256",
+        "state": state or secrets.token_urlsafe(16),
+    }
+    return f"{base_url.rstrip('/')}{_AUTH_PATH}?{urlencode(params)}"
+
+
+def extract_code(pasted: str) -> str:
+    """Pull the authorization code out of a pasted callback URL, or accept a
+    bare code. Reports an error callback rather than returning empty."""
+    text = pasted.strip()
+    if "?" not in text and "://" not in text:
+        return text
+    query = parse_qs(urlparse(text).query)
+    if "error" in query:
+        detail = query.get("error_description", [""])[0]
+        raise ShuttelAuthError(
+            f"Shuttel returned an error instead of a code: "
+            f"{query['error'][0]}" + (f" ({detail})" if detail else "")
+        )
+    codes = query.get("code")
+    if not codes:
+        raise ShuttelAuthError("No 'code' parameter in that URL.")
+    return codes[0]
+
+
+class TokenStore:
+    """Persists the refresh token. It is a credential; treat it like one."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def load(self) -> str:
+        try:
+            return json.loads(self.path.read_text()).get("refresh_token", "")
+        except Exception:
+            # Missing, unreadable or corrupt all mean the same thing to the
+            # caller: log in again.
+            return ""
+
+    def save(self, refresh_token: str) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({"refresh_token": refresh_token}))
+        os.chmod(self.path, 0o600)
+
+
 class TokenClient:
     """Holds a Keycloak access token, refreshing it as needed."""
 
@@ -72,14 +166,16 @@ class TokenClient:
         credentials: ShuttelCredentials,
         base_url: str = SHUTTEL_BASE,
         transport: httpx.BaseTransport | None = None,
+        store: TokenStore | None = None,
     ):
         self._creds = credentials
         self._base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self._base_url, transport=transport, timeout=30.0
         )
+        self._tokens = store
         self._access: str = ""
-        self._refresh: str = ""
+        self._refresh: str = store.load() if store else ""
         self._expires_at: float = 0.0
 
     def access_token(self) -> str:
@@ -87,12 +183,47 @@ class TokenClient:
             return self._access
         if self._refresh and self._try_refresh():
             return self._access
-        return self._password_grant()
+        if self._creds.complete:
+            return self._password_grant()
+        raise ShuttelAuthError(
+            "No usable Shuttel session. Run:  python tools/shuttel_login.py"
+        )
+
+    def exchange_code(self, code: str, verifier: str) -> str:
+        """Trade an authorization code for tokens (PKCE)."""
+        try:
+            resp = self._client.post(_TOKEN_PATH, data={
+                "grant_type": "authorization_code",
+                "client_id": SHUTTEL_CLIENT_ID,
+                "code": code,
+                "code_verifier": verifier,
+                "redirect_uri": REDIRECT_URI,
+            })
+        except httpx.HTTPError as exc:
+            raise ShuttelAuthError(f"Could not reach Shuttel: {exc}") from None
+        if resp.status_code != 200:
+            code_, desc = "", ""
+            try:
+                payload = resp.json()
+                code_, desc = payload.get("error", ""), payload.get("error_description", "")
+            except Exception:
+                pass
+            raise ShuttelAuthError(
+                f"Shuttel would not exchange the code (HTTP {resp.status_code} "
+                f"{code_}" + (f": {desc}" if desc else "") + "). Authorization "
+                "codes are single-use and short-lived -- start the login again."
+            )
+        return self._store(resp.json())
 
     def _store(self, payload: dict) -> str:
         self._access = payload.get("access_token", "")
-        self._refresh = payload.get("refresh_token", "") or self._refresh
+        rotated = payload.get("refresh_token", "")
+        self._refresh = rotated or self._refresh
         self._expires_at = time.time() + float(payload.get("expires_in", 0))
+        # Keycloak rotates refresh tokens. Dropping the new one means the next
+        # unattended run fails and you are back at a browser.
+        if rotated and self._tokens is not None:
+            self._tokens.save(rotated)
         return self._access
 
     def _try_refresh(self) -> bool:

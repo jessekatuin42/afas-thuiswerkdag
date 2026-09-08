@@ -31,6 +31,7 @@ from src.adapters.shuttel import (  # noqa: E402
     ShuttelClient,
     ShuttelCredentials,
     TokenClient,
+    TokenStore,
 )
 from src.config import PROJECT_ROOT  # noqa: E402
 from src.logging_util import error, log  # noqa: E402
@@ -53,20 +54,20 @@ def load_credentials() -> ShuttelCredentials:
 
 def main() -> int:
     creds = load_credentials()
-    if not creds.complete:
+    store = TokenStore(PROJECT_ROOT / ".shuttel-token.json")
+    if not store.load() and not creds.complete:
         error(
-            "Shuttel credentials are not configured.\n"
-            "Add to .env:\n"
-            "  SHUTTEL_USERNAME=your.shuttel.login\n"
-            "  SHUTTEL_PASSWORD=your-shuttel-password"
+            "No Shuttel session. Run:  python tools/shuttel_login.py\n"
+            "(The password grant does not work for this account -- Keycloak's\n"
+            " direct flow rejects credentials that log in fine in a browser.)"
         )
         return 3
 
     outdir = PROJECT_ROOT / "artifacts" / "inspect" / "shuttel"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    log("Authenticating with Shuttel (Keycloak password grant)")
-    client = ShuttelClient(TokenClient(creds))
+    log("Authenticating with Shuttel")
+    client = ShuttelClient(TokenClient(creds, store=store))
 
     try:
         results = client.inspect()

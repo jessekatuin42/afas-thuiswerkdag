@@ -22,3 +22,6 @@ config.local.toml
 
 # Local planner database (your plan and sync history)
 data/
+
+# Shuttel refresh token -- a credential. NEVER commit.
+.shuttel-token.json
