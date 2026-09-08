@@ -17,7 +17,7 @@ FROM mcr.microsoft.com/playwright/python:v${PLAYWRIGHT_VERSION}-noble
 # Container images default to UTC. That is precisely the fault that let a
 # 13:00 CEST run walk straight through the 11:00-11:59 presence window on
 # 2026-08-27: the wall-clock guard is only as trustworthy as the caller's TZ.
-# Both scripts/daily-run.sh and dates.today() read local time.
+# dates.today() and every declaration timestamp read local time.
 ENV TZ=Europe/Amsterdam \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

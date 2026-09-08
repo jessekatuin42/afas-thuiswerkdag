@@ -164,7 +164,11 @@ There are deliberately **no tests that create real declarations**; use
 
 ## Next steps, roughly by value
 
-1. **Batch mode.** The biggest real-world gap. AFAS's whole point of a
+1. ~~**Batch mode.**~~ Superseded 2026-09-08 by the dashboard (`web/`), which
+   plans a whole month and files it through the same single-day flow, one day
+   at a time, verifying each. The original note follows for context.
+
+   **Batch mode.** The biggest real-world gap. AFAS's whole point of a
    *verzameldeclaratie* is multiple lines in one submission, and that is how
    people actually use it — observed bookings covered 6 and 11 days at once.
    The create flow already loops naturally: click `Nieuw` / fill / dialog
@@ -172,8 +176,9 @@ There are deliberately **no tests that create real declarations**; use
    need `--date-range`, or repeatable `--date`, plus per-date duplicate
    filtering before adding lines. This turns a 15s-per-day tool into a
    one-command month.
-2. **Verify `--headless` against live AFAS.** Needed before anyone trusts the
-   cron recipe in SETUP.md. Cheap to do, currently an unproven claim.
+2. ~~**Verify `--headless` against live AFAS.**~~ Done 2026-09-08: a
+   containerised headless run completed a cold password+TOTP re-login and
+   filed a real declaration.
 3. **Detect and clear an orphan line** if the page-level submit fails.
 4. **Raise the grid page size** to cut the pagination cost.
 5. **`--list` command** to print your Thuiswerkdagen. Trivial given

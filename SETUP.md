@@ -159,17 +159,26 @@ python afas_thuiswerk.py --today --headless
 
 ---
 
-## 6. Optional: run it on a schedule
+## 6. Filing more than one day
 
-Add a weekday cron entry (adjust paths):
+Use the dashboard rather than a scheduler:
 
-```cron
-0 17 * * 1-5 cd ~/afas-thuiswerkdag && .venv/bin/python afas_thuiswerk.py --today --headless --quiet
+```bash
+docker compose up -d      # then open http://127.0.0.1:8765
 ```
 
-This needs credentials in `.env` (step 5) since nobody is there to log in.
-Duplicate detection makes repeated runs safe, and the tool exits non-zero if
-anything is unconfirmed — so alert on the exit code:
+Click days, press **Check**, press **Sync**. It reads both systems back before
+filing anything, so a day already declared is never declared twice.
+
+> An earlier version shipped an 11:00 timer that inferred "I worked from home"
+> from the machine being switched on. That inference was wrong twice — once
+> when a scheduler replayed a missed run, once when the caller's clock read
+> UTC — and each failure declared a day that had not happened. Picking days
+> explicitly removes the guess, so the timer was dropped.
+>
+> The CLI still runs a single day (`--today`, `--date`) if you want it under
+> your own scheduler. Duplicate detection makes repeated runs safe, and it
+> exits non-zero when anything is unconfirmed, so alert on the exit code:
 
 | Code | Meaning |
 | --- | --- |

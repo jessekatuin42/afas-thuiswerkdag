@@ -10,14 +10,15 @@ from src.planner.model import (
 
 
 def test_the_default_is_tuesday_wednesday_thursday():
-    """Matches scripts/daily-run.sh, so one AFAS_DAYS governs both the timer
-    and the dashboard rather than two settings drifting apart."""
+    """Tue/Wed/Thu are the default home days. Inherited from the unattended
+    timer this tool used to ship with, and kept because existing installs
+    already set AFAS_DAYS and the question it answers has not changed."""
     assert DEFAULT_HOME_DAYS == (2, 3, 4)
     assert parse_home_days(None) == (2, 3, 4)
 
 
 def test_an_empty_value_falls_back_to_the_default():
-    """Mirrors the shell's ${AFAS_DAYS:-2,3,4}."""
+    """Unset and empty mean the same thing: use the default."""
     assert parse_home_days("") == (2, 3, 4)
     assert parse_home_days("   ") == (2, 3, 4)
 
@@ -36,7 +37,7 @@ def test_surrounding_whitespace_is_tolerated():
 
 @pytest.mark.parametrize("raw", ["abc", "2,x", "0", "8", "-1", "2.5"])
 def test_a_malformed_list_refuses_rather_than_guessing(raw):
-    """daily-run.sh skips rather than guessing on a bad AFAS_DAYS. Quietly
-    falling back to the default here would file days the user never chose."""
+    """Quietly falling back to the default would mark days the user never
+    chose, which is the one thing a planner must not do."""
     with pytest.raises(InvalidWeekdaysError):
         parse_home_days(raw)

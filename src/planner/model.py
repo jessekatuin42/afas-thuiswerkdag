@@ -61,11 +61,12 @@ class Action:
 # ---------------------------------------------------------------------------
 # Which weekdays are home days by default
 #
-# Deliberately the same AFAS_DAYS variable, and the same ISO-weekday encoding
-# (Mon=1 ... Sun=7), that scripts/daily-run.sh already reads. One setting
-# governing both the timer and the dashboard is worth more than a tidier name:
-# two settings for the same fact drift apart, and the failure mode is a day
-# declared in one place and not the other.
+# AFAS_DAYS, as a list of ISO weekdays (Mon=1 ... Sun=7). The name and encoding
+# come from the unattended timer this tool used to ship with: that timer
+# inferred work-from-home from presence and needed to know which weekdays
+# counted. The dashboard replaced inference with explicit selection, so the
+# timer is gone -- but the setting stays, because "which days are home days"
+# is still the right question and existing installs already answer it.
 # ---------------------------------------------------------------------------
 
 DEFAULT_HOME_DAYS: tuple[int, ...] = (2, 3, 4)   # Tue, Wed, Thu
@@ -81,10 +82,8 @@ class InvalidWeekdaysError(ValueError):
 def parse_home_days(raw: str | None) -> tuple[int, ...]:
     """Parse an AFAS_DAYS list of ISO weekdays.
 
-    Empty or unset gives the default, matching the shell's
-    ``${AFAS_DAYS:-2,3,4}``. Anything malformed raises rather than falling
-    back: daily-run.sh skips rather than guessing, and guessing here would
-    mark days the user never chose.
+    Empty or unset gives the default. Anything malformed raises rather than
+    falling back, because guessing would mark days the user never chose.
     """
     if raw is None or not raw.strip():
         return DEFAULT_HOME_DAYS
