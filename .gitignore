@@ -16,3 +16,6 @@ config.local.toml
 
 # Credentials — NEVER commit. Contains password and TOTP secret.
 .env
+
+# Container-side browser session (seeded copy of .browser-profile)
+.browser-profile-docker/

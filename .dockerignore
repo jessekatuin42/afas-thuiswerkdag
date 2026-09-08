@@ -1,0 +1,19 @@
+# Secrets and session state never enter the image. They are mounted at run
+# time instead, so a built image is safe to push to a registry.
+.env
+.env.*
+!.env.example
+.browser-profile/
+artifacts/
+
+# Host-specific / rebuildable
+.venv/
+.git/
+.gitignore
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+Dockerfile
+.dockerignore
+.browser-profile-docker/
