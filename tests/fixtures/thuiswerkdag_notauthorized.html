@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Aanmaken verzameldeclaratie thuiswerkdag (fixture)</title></head>
+<body>
+  <!-- Mirrors the real DOM captured on 02-09-2026, when AFAS revoked access to
+       the child page the 'Nieuw' action navigates to
+       (/aanmaken-declaratie-ess-incl-autorisatie-prs/thuiswerkdag).
+
+       'Nieuw' is declared external="true": AFAS answers the action with a
+       redirect into a 1500x925 popup, then resolves that URL via
+       POST /event/webform/url -- which returned 401. So the popup shell opens
+       EMPTY and inert, and a separate 'Foutmelding!' dialog is stacked on top.
+
+       Two role="dialog" nodes therefore exist and NEITHER holds a Datum field. -->
+  <main>
+    <h1>Aanmaken verzameldeclaratie thuiswerkdag</h1>
+    <h2>Thuiswerkdagen</h2>
+    <button type="button" id="nieuw">Nieuw</button>
+    <div id="lines" role="status">Geen gegevens</div>
+    <button type="button" id="page-aanmaken">Aanmaken</button>
+  </main>
+
+  <!-- The popup shell: opened, but the server never filled it. -->
+  <div id="popup" class="floatingWindow is-popup-window" role="dialog" aria-modal="true"
+       aria-label="Dialog" inert style="z-index:10004;opacity:0;width:1500px;min-height:925px" hidden>
+    <div class="floatingHeader"></div>
+    <div class="floatingContent"></div>
+    <div class="floatingFooter"></div>
+  </div>
+
+  <!-- The refusal, stacked on top. -->
+  <div id="err" class="floatingWindow is-dialog-window" role="dialog" aria-modal="true"
+       aria-labelledby="err-title" style="z-index:10006;opacity:1" hidden>
+    <span id="err-title">Foutmelding!</span>
+    <button type="button" aria-label="Sluiten">×</button>
+    <div>Je hebt geen toegang tot (dit deel van) deze website. Met je huidige
+      gebruikersnaam heb je geen toegang tot (dit deel van) de website.
+      (C79BD2A377614BCB856B7AF9C00BBF3E)</div>
+    <button type="button" id="err-ok">OK</button>
+  </div>
+
+  <script>
+    document.getElementById('nieuw').addEventListener('click', function () {
+      document.getElementById('popup').hidden = false;
+      document.getElementById('err').hidden = false;
+    });
+  </script>
+</body>
+</html>

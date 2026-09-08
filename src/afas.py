@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from urllib.parse import parse_qs, unquote, urlparse
 
 from playwright.sync_api import Locator, TimeoutError as PWTimeout
 
@@ -55,6 +56,48 @@ RE_NIEUW = re.compile(r"^\s*nieuw\s*$", re.IGNORECASE)
 RE_AANMAKEN = re.compile(r"^\s*aanmaken\s*$", re.IGNORECASE)
 RE_DATUM = re.compile(r"^\s*datum\s*$", re.IGNORECASE)
 RE_SNELFILTER_SOORT = re.compile(r"snelfilter voor soort", re.IGNORECASE)
+
+# AFAS refuses access in two different shapes, and neither is a DOM problem:
+#
+#   1. A 'Foutmelding!' modal stacked over the page, when an action navigates
+#      somewhere the account may not go. The 'Nieuw' action is declared
+#      external="true", so it redirects into a popup; AFAS resolves that URL
+#      via POST /event/webform/url, and a 401 there leaves the popup shell
+#      empty and inert with this modal on top.
+#   2. A redirect to /speciale-pagina-prs/notauthorized (which still returns
+#      HTTP 200 — the refusal is only visible in the body).
+#
+# Both were observed on 02-09-2026, when the account lost rights on
+# /aanmaken-declaratie-ess-incl-autorisatie-prs/thuiswerkdag.
+RE_GEEN_TOEGANG = re.compile(r"geen toegang tot", re.IGNORECASE)
+RE_NIET_GEAUTORISEERD = re.compile(
+    r"niet geautoriseerd|rechten staan niet toe", re.IGNORECASE
+)
+RE_AFAS_ERROR_ID = re.compile(r"\(([0-9A-F]{32})\)")
+NOTAUTHORIZED_PATH = "notauthorized"
+
+
+class AfasRefusedError(RuntimeError):
+    """AFAS denied this account access to a page or an action.
+
+    Distinct from every other failure here: nothing in this tool can fix it.
+    It needs the entitlement restored in InSite.
+    """
+
+
+def refusal_in(text: str) -> str | None:
+    """Return the refusal AFAS stated in ``text``, or None if it is not one.
+
+    Kept narrow on purpose. The word 'autorisatie' appears in perfectly healthy
+    AFAS page titles ('Aanmaken declaratie (ESS) (incl. autorisatie)'), so only
+    the refusal phrasings count.
+    """
+    if not text:
+        return None
+    if not (RE_GEEN_TOEGANG.search(text) or RE_NIET_GEAUTORISEERD.search(text)):
+        return None
+    stated = " ".join(text.split())
+    return stated[:400]
 
 MAX_ROWS = 400
 MAX_PAGES = 20
@@ -303,6 +346,7 @@ class AfasInSite:
         self.sess.goto(self.cfg.thuiswerkdag_url)
         self.sess.ensure_authenticated()
         settle(self.page)
+        self.assert_page_accessible()
 
         self.click_nieuw()
         dialog = self.wait_for_dialog()
@@ -353,26 +397,102 @@ class AfasInSite:
         raise RuntimeError("Could not find the 'Nieuw' control on the Thuiswerkdag page.")
 
     def wait_for_dialog(self) -> Locator:
-        """The modal opened by 'Nieuw', scoped so page-level buttons can't match."""
-        dialog = self.page.get_by_role("dialog").last
+        """The modal opened by 'Nieuw', scoped so page-level buttons can't match.
+
+        AFAS may stack more than one dialog: a refusal is drawn *on top of* the
+        popup it refused to fill. So pick the dialog that actually holds the
+        form rather than whichever is topmost, and if none does, say what AFAS
+        said instead of blaming the DOM.
+        """
         try:
-            dialog.wait_for(state="visible", timeout=15_000)
+            self.page.get_by_role("dialog").last.wait_for(
+                state="visible", timeout=15_000
+            )
         except PWTimeout:
+            self.check_not_refused()  # a refusal can appear without any dialog
             self.sess.screenshot("no-dialog")
             raise RuntimeError("The 'Nieuw' dialog did not appear.") from None
 
         for _ in range(10):
+            dialog = self._dialog_with_datum()
+            if dialog is not None:
+                return dialog
+            self.check_not_refused()
+            self.page.wait_for_timeout(1_000)
+
+        self.sess.screenshot("no-datum-field")
+        raise RuntimeError("The dialog appeared but has no 'Datum' field.")
+
+    def _dialog_with_datum(self) -> Locator | None:
+        """Whichever open dialog holds the Datum field, or None."""
+        dialogs = self.page.get_by_role("dialog")
+        try:
+            count = dialogs.count()
+        except Exception:
+            return None
+        for i in range(count):
+            dialog = dialogs.nth(i)
             try:
                 if dialog.get_by_label(RE_DATUM).count() > 0:
                     return dialog
                 if dialog.get_by_role("textbox", name=RE_DATUM).count() > 0:
                     return dialog
             except Exception:
-                pass
-            self.page.wait_for_timeout(1_000)
+                continue
+        return None
 
-        self.sess.screenshot("no-datum-field")
-        raise RuntimeError("The dialog appeared but has no 'Datum' field.")
+    # ------------------------------------------------------------------
+    # Authorization
+    # ------------------------------------------------------------------
+
+    def refusal(self) -> str | None:
+        """AFAS's refusal for the current page, or None if it is not refusing."""
+        try:
+            url = self.page.url or ""
+        except Exception:
+            url = ""
+        refused_page = ""
+        if NOTAUTHORIZED_PATH in url.lower():
+            refused_page = unquote(parse_qs(urlparse(url).query).get("url", [""])[0])
+
+        stated = None
+        for scope in (self.page.get_by_role("dialog"), self.page.locator("body")):
+            try:
+                for i in range(scope.count()):
+                    stated = refusal_in(scope.nth(i).inner_text())
+                    if stated:
+                        break
+            except Exception:
+                continue
+            if stated:
+                break
+
+        if not stated and not refused_page:
+            return None
+
+        parts = [stated or "AFAS refused access to this page."]
+        if refused_page:
+            parts.append(f"Refused page: {refused_page}")
+        if stated:
+            found = RE_AFAS_ERROR_ID.search(stated)
+            if found:
+                parts.append(f"AFAS error id: {found.group(1)}")
+        parts.append(
+            "This is an InSite authorization problem, not a fault in this tool — "
+            "the entitlement has to be restored by HR or the InSite beheerder."
+        )
+        return " ".join(parts)
+
+    def check_not_refused(self) -> None:
+        """Raise if AFAS is currently refusing access; otherwise do nothing."""
+        stated = self.refusal()
+        if stated:
+            self.sess.screenshot("afas-refused")
+            raise AfasRefusedError(stated)
+
+    def assert_page_accessible(self) -> None:
+        """Fail fast when the page itself is refused, before touching controls."""
+        self.check_not_refused()
 
     def _datum_field(self, scope) -> Locator:
         for loc in (

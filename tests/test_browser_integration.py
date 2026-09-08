@@ -160,3 +160,39 @@ class TestFailSafe:
         sess.page.locator("#datum").fill("18-08-2026")
         assert afas.read_datum(dialog) != TARGET
         assert sess.page.locator("body").get_attribute("data-submitted") is None
+
+
+class TestAfasRefusal:
+    """AFAS refusing access must be reported as a refusal, not as DOM drift.
+
+    On 02-09-2026 the account lost rights on the page the 'Nieuw' action opens
+    (``/aanmaken-declaratie-ess-incl-autorisatie-prs/thuiswerkdag``). The tool
+    reported "The dialog appeared but has no 'Datum' field", which reads like a
+    selector problem and sends you looking in entirely the wrong place.
+    """
+
+    def test_refusal_dialog_is_reported_as_a_refusal(self, sess):
+        afas = _open(sess, "thuiswerkdag_notauthorized.html")
+        afas.click_nieuw()
+
+        with pytest.raises(RuntimeError) as excinfo:
+            afas.wait_for_dialog()
+
+        message = str(excinfo.value)
+        assert "geen toegang" in message, "must quote what AFAS actually said"
+        assert "C79BD2A377614BCB856B7AF9C00BBF3E" in message, "must carry the error id"
+        assert "Datum" not in message, "must not blame a missing Datum field"
+
+    def test_refusal_page_is_reported_before_clicking_anything(self, sess):
+        """A full-page refusal must be caught on arrival, not chased into a click."""
+        afas = _open(sess, "notauthorized_page.html")
+
+        with pytest.raises(RuntimeError, match="niet geautoriseerd|geen toegang"):
+            afas.assert_page_accessible()
+
+    def test_a_healthy_page_is_not_mistaken_for_a_refusal(self, sess):
+        """Guards against the detector firing on the normal page."""
+        afas = _open(sess, "thuiswerkdag_form.html")
+        afas.assert_page_accessible()  # must not raise
+        afas.click_nieuw()
+        assert afas.wait_for_dialog().locator("#datum").count() == 1
