@@ -41,8 +41,18 @@ SHUTTEL_SCOPE = "openid offline_access shuttel_portal_api_user"
 _TOKEN_PATH = f"/auth/realms/{SHUTTEL_REALM}/protocol/openid-connect/token"
 _AUTH_PATH = f"/auth/realms/{SHUTTEL_REALM}/protocol/openid-connect/auth"
 
-#: Registered on the client; Keycloak rejects anything else.
-REDIRECT_URI = "https://mijn.shuttel.nl/n/callback"
+#: Where Keycloak sends the authorization code back.
+#:
+#: NOT the portal's own /n/callback. That is the Flutter app's OIDC route: it
+#: reads ?code=..., exchanges it, and rewrites the URL clean, so by the time a
+#: human looks at the address bar the code is gone. Verified the hard way --
+#: the paste came back as a bare "https://mijn.shuttel.nl/n/callback".
+#:
+#: The client accepts any https://mijn.shuttel.nl/* path (probed: /, /n/,
+#: /robots.txt, /n/oidc-probe all reach the login page; localhost is rejected
+#: with 400). /robots.txt serves 26 bytes of text/plain with no JavaScript, so
+#: nothing runs, nothing consumes the code, and it stays in the address bar.
+REDIRECT_URI = "https://mijn.shuttel.nl/robots.txt"
 
 #: Refresh this many seconds before the token actually expires, so a slow
 #: request cannot land after expiry.

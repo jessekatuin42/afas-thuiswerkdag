@@ -56,7 +56,10 @@ def test_the_authorize_url_carries_everything_keycloak_needs():
     assert q["code_challenge_method"] == "S256"
     assert q["code_challenge"] == verifier_challenge("VER")
     assert q["state"] == "ST"
-    assert q["redirect_uri"] == "https://mijn.shuttel.nl/n/callback"
+    # Deliberately not the app's own /n/callback -- the Flutter router
+    # consumes the code there before a human can read it.
+    assert q["redirect_uri"] == "https://mijn.shuttel.nl/robots.txt"
+    assert "/n/callback" not in q["redirect_uri"]
 
 
 def test_offline_access_is_requested_so_the_token_survives_the_session():
@@ -69,7 +72,7 @@ def test_offline_access_is_requested_so_the_token_survives_the_session():
 # ---- pasting the callback back --------------------------------------------
 
 def test_a_pasted_callback_url_yields_its_code():
-    url = "https://mijn.shuttel.nl/n/callback?state=x&code=THE-CODE&session_state=y"
+    url = "https://mijn.shuttel.nl/robots.txt?state=x&code=THE-CODE&session_state=y"
     assert extract_code(url) == "THE-CODE"
 
 
@@ -78,7 +81,7 @@ def test_a_bare_code_is_accepted_as_is():
 
 
 def test_a_callback_carrying_an_error_is_reported_not_silently_empty():
-    url = "https://mijn.shuttel.nl/n/callback?error=access_denied&error_description=nope"
+    url = "https://mijn.shuttel.nl/robots.txt?error=access_denied&error_description=nope"
     with pytest.raises(ShuttelAuthError) as exc:
         extract_code(url)
     assert "access_denied" in str(exc.value)
@@ -137,7 +140,7 @@ def test_exchanging_a_code_sends_the_verifier_and_stores_the_refresh_token(tmp_p
     assert body["grant_type"] == "authorization_code"
     assert body["code"] == "CODE"
     assert body["code_verifier"] == "VER"
-    assert body["redirect_uri"] == "https://mijn.shuttel.nl/n/callback"
+    assert body["redirect_uri"] == "https://mijn.shuttel.nl/robots.txt"
     assert store.load() == "R"
 
 
