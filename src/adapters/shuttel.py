@@ -144,6 +144,74 @@ class TokenClient:
         return self._store(resp.json())
 
 
+# ---------------------------------------------------------------------------
+# Discovery
+#
+# The API surface was read out of the portal's own public Flutter bundle
+# (main.dart.js), which is generated OpenAPI client code and therefore carries
+# every path as a string literal. What it does NOT carry is this account's
+# data: which declarationCode means "commute", which saved routes exist, how
+# far they are. Those decide the contents of a financial record, so they get
+# read from the account rather than guessed -- the same reason
+# tools/inspect_afas.py captures real DOM instead of inventing selectors.
+#
+# /api/v1/openapi.json answers 401 rather than 404, so the full spec is there
+# for an authenticated caller and is worth collecting first.
+# ---------------------------------------------------------------------------
+
+#: Read-only endpoints worth capturing. Deliberately excludes
+#: /api/v1/profile/bankaccount and /api/v1/profile/postal_address: nothing here
+#: needs them, and inspection output lands in artifacts/ as plain JSON.
+INSPECT_ENDPOINTS: tuple[str, ...] = (
+    "/api/v1/openapi.json",
+    "/api/v1/profile/",
+    "/api/v1/profile/declaration_codes",
+    "/api/v1/favorites/routes",
+    "/api/v1/homeworkdays/v2",
+    "/api/v1/mobility_arrangement/services",
+)
+
+
+class ShuttelClient:
+    """Authenticated read-only access, for discovery.
+
+    Has no method that writes. That is the point: it is used to work out what
+    a real declaration looks like, and a tool for that must not be able to
+    create one by accident.
+    """
+
+    def __init__(
+        self,
+        tokens: TokenClient,
+        base_url: str = SHUTTEL_BASE,
+        transport: httpx.BaseTransport | None = None,
+    ):
+        self._tokens = tokens
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"), transport=transport, timeout=60.0
+        )
+
+    def get(self, path: str) -> dict:
+        token = self._tokens.access_token()
+        try:
+            resp = self._client.get(path, headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as exc:
+            return {"status": None, "error": f"{type(exc).__name__}: {exc}"}
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text[:2000]
+        return {"status": resp.status_code, "body": body}
+
+    def inspect(self) -> dict[str, dict]:
+        """Collect every read-only endpoint.
+
+        One endpoint failing does not lose the others: entitlements differ per
+        account, and a partial capture is still worth having.
+        """
+        return {path: self.get(path) for path in INSPECT_ENDPOINTS}
+
+
 class ShuttelAdapter:
     """DayFiler for Shuttel. API surface not yet mapped -- see spec Q1.
 
