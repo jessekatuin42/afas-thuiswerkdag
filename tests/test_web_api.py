@@ -174,3 +174,47 @@ def test_the_dashboard_page_is_served(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
+
+
+def test_the_month_view_advertises_which_weekdays_are_home_days(client):
+    body = client.get("/api/month/2026/9").json()
+    assert body["home_weekdays"] == [2, 3, 4]
+    assert body["home_weekday_names"] == ["Tue", "Wed", "Thu"]
+
+
+def test_fill_marks_every_configured_weekday_in_the_month(client):
+    resp = client.post("/api/fill/2026/9")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 14        # Sept 2026 has 14 Tue/Wed/Thu
+
+    days = client.get("/api/month/2026/9").json()["days"]
+    marked = [d for d in days if d["intent"] == "home"]
+    assert len(marked) == 14
+    # weekday is Python's Mon=0, so Tue/Wed/Thu are 1/2/3
+    assert {d["weekday"] for d in marked} == {1, 2, 3}
+
+
+def test_fill_is_idempotent(client):
+    client.post("/api/fill/2026/9")
+    client.post("/api/fill/2026/9")
+    days = client.get("/api/month/2026/9").json()["days"]
+    assert len([d for d in days if d["intent"] == "home"]) == 14
+
+
+def test_fill_leaves_days_outside_the_month_alone(client):
+    client.post("/api/fill/2026/9")
+    assert client.get("/api/month/2026/10").json()["days"][0]["intent"] == "none"
+
+
+def test_a_custom_weekday_set_is_honoured(tmp_path):
+    from src.planner.engine import SyncEngine
+
+    store = PlanStore(tmp_path / "plan.db")
+    filers = {"afas": FakeFiler("afas"), "shuttel": FakeFiler("shuttel")}
+    app = create_app(store, SyncEngine(store, filers), home_days=(1, 5))
+    c = TestClient(app)
+    assert c.get("/api/month/2026/9").json()["home_weekday_names"] == ["Mon", "Fri"]
+    c.post("/api/fill/2026/9")
+    marked = [d for d in c.get("/api/month/2026/9").json()["days"]
+              if d["intent"] == "home"]
+    assert {d["weekday"] for d in marked} == {0, 4}

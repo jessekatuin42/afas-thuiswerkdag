@@ -56,3 +56,50 @@ class Action:
     system: str
     kind: ActionKind
     reason: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Which weekdays are home days by default
+#
+# Deliberately the same AFAS_DAYS variable, and the same ISO-weekday encoding
+# (Mon=1 ... Sun=7), that scripts/daily-run.sh already reads. One setting
+# governing both the timer and the dashboard is worth more than a tidier name:
+# two settings for the same fact drift apart, and the failure mode is a day
+# declared in one place and not the other.
+# ---------------------------------------------------------------------------
+
+DEFAULT_HOME_DAYS: tuple[int, ...] = (2, 3, 4)   # Tue, Wed, Thu
+
+WEEKDAY_NAMES = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu",
+                 5: "Fri", 6: "Sat", 7: "Sun"}
+
+
+class InvalidWeekdaysError(ValueError):
+    """AFAS_DAYS could not be read. Never fall back silently."""
+
+
+def parse_home_days(raw: str | None) -> tuple[int, ...]:
+    """Parse an AFAS_DAYS list of ISO weekdays.
+
+    Empty or unset gives the default, matching the shell's
+    ``${AFAS_DAYS:-2,3,4}``. Anything malformed raises rather than falling
+    back: daily-run.sh skips rather than guessing, and guessing here would
+    mark days the user never chose.
+    """
+    if raw is None or not raw.strip():
+        return DEFAULT_HOME_DAYS
+
+    days: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit() or not 1 <= int(part) <= 7:
+            raise InvalidWeekdaysError(
+                f"unreadable AFAS_DAYS {raw!r} - expected ISO weekdays "
+                f"like 2,3,4 (Mon=1 ... Sun=7)"
+            )
+        days.add(int(part))
+    if not days:
+        return DEFAULT_HOME_DAYS
+    return tuple(sorted(days))

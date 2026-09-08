@@ -16,7 +16,11 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
 from src.planner.engine import SyncEngine
-from src.planner.model import Intent
+from src.planner.model import (
+    DEFAULT_HOME_DAYS,
+    WEEKDAY_NAMES,
+    Intent,
+)
 from src.planner.store import PlanStore
 from web.jobs import JobRunner
 
@@ -60,10 +64,17 @@ def _parse_day(iso: str) -> date:
 
 
 def create_app(
-    store: PlanStore, engine: SyncEngine, runner: JobRunner | None = None
+    store: PlanStore,
+    engine: SyncEngine,
+    runner: JobRunner | None = None,
+    home_days: tuple[int, ...] = DEFAULT_HOME_DAYS,
 ) -> FastAPI:
     app = FastAPI(title="Day planner")
     jobs = runner or JobRunner()
+
+    def month_days(year: int, month: int) -> list[date]:
+        return [date(year, month, d)
+                for d in range(1, calendar.monthrange(year, month)[1] + 1)]
 
     @app.get("/api/month/{year}/{month}")
     def month(year: int, month: int):
@@ -93,6 +104,8 @@ def create_app(
                 s: (t.isoformat() if (t := store.state_read_at(s)) else None)
                 for s in ("afas", "shuttel")
             },
+            "home_weekdays": list(home_days),
+            "home_weekday_names": [WEEKDAY_NAMES[d] for d in home_days],
         }
 
     @app.put("/api/day/{iso}")
@@ -105,6 +118,20 @@ def create_app(
         for iso in body.dates:
             store.set_intent(date.fromisoformat(iso), Intent(body.intent))
         return {"ok": True, "count": len(body.dates)}
+
+    @app.post("/api/fill/{year}/{month}")
+    def fill(year: int, month: int):
+        """Mark every configured home weekday in the month.
+
+        Additive on purpose: it never clears a day you marked by hand, so
+        pressing it twice cannot lose work.
+        """
+        days = [d for d in month_days(year, month)
+                if d.isoweekday() in home_days]
+        for day in days:
+            store.set_intent(day, Intent.HOME)
+        return {"count": len(days),
+                "weekdays": [WEEKDAY_NAMES[d] for d in home_days]}
 
     @app.post("/api/refresh/{year}/{month}")
     def refresh(year: int, month: int):

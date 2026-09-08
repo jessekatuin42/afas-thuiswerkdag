@@ -54,6 +54,7 @@
   <strong id="label" style="min-width:11rem;text-align:center"></strong>
   <button id="next" title="Next month">&gt;</button>
   <span style="flex:1"></span>
+  <button id="fill" title="Mark every one of these days this month">Fill</button>
   <button id="refresh">Check AFAS</button>
   <button id="sync" class="primary" disabled>Sync</button>
 </div>
@@ -101,6 +102,8 @@ function render() {
     );
   }
   $("grid").innerHTML = cells.join("");
+
+  $("fill").textContent = "Fill " + (data.home_weekday_names || []).join("/");
 
   const todo = data.actions.filter((a) => a.kind === "file").length;
   const unknown = data.actions.filter((a) => a.kind === "unknown").length;
@@ -258,7 +261,19 @@ $("dow").innerHTML = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
   .map((d) => `<div class="dow">${d}</div>`).join("");
 $("prev").onclick = () => { if (--month < 1) { month = 12; year--; } load(); };
 $("next").onclick = () => { if (++month > 12) { month = 1; year++; } load(); };
+$("fill").onclick = async () => {
+  await j(`/api/fill/${year}/${month}`, { method: "POST" });
+  await load();
+};
 $("refresh").onclick = startRefresh;
-$("sync").onclick = startSync;
+$("sync").onclick = () => {
+  const n = data.actions.filter((a) => a.kind === "file").length;
+  // The one irreversible action in the app. There is no delete in v1, so a
+  // mis-click here means declarations you have to unpick in AFAS by hand.
+  if (confirm(`File ${n} thuiswerkdag${n > 1 ? "en" : ""} in AFAS?\n\n` +
+              `This submits real declarations and cannot be undone here.`)) {
+    startSync();
+  }
+};
 load();
 </script>

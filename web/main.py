@@ -14,6 +14,7 @@ from src.adapters.afas_lazy import LazyAfasAdapter
 from src.adapters.shuttel import ShuttelAdapter, ShuttelCredentials, TokenClient
 from src.config import PROJECT_ROOT, load_config
 from src.planner.engine import SyncEngine
+from src.planner.model import parse_home_days
 from src.planner.store import PlanStore
 from web.app import create_app
 
@@ -29,10 +30,15 @@ def build_default_app():
 
     # AFAS costs a browser, so it is opened per operation rather than held
     # open for the life of the process.
+    # Same AFAS_DAYS the systemd timer reads. A malformed value raises here
+    # and the app refuses to start, rather than quietly marking days you did
+    # not choose.
+    home_days = parse_home_days(os.environ.get("AFAS_DAYS"))
+
     return create_app(store, SyncEngine(store, {
         "afas": LazyAfasAdapter(cfg),
         "shuttel": shuttel,
-    }))
+    }), home_days=home_days)
 
 
 app = build_default_app()
